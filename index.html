@@ -1,0 +1,973 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GitHub Repo Dashboard</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --panel-soft: #f1f4f8;
+      --text: #20252d;
+      --muted: #657181;
+      --border: #d7dee8;
+      --accent: #0f766e;
+      --accent-strong: #115e59;
+      --warn: #b45309;
+      --warn-bg: #fff7ed;
+      --danger: #b42318;
+      --danger-bg: #fef3f2;
+      --ok: #15803d;
+      --ok-bg: #f0fdf4;
+      --idle: #475467;
+      --shadow: 0 14px 36px rgba(20, 28, 38, 0.08);
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    button, input, select {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      min-height: 38px;
+      padding: 0 12px;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: #9aa7b6; }
+    button:disabled { cursor: not-allowed; opacity: 0.6; }
+
+    .primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    .primary:hover {
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+    }
+
+    .app {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 18px;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: grid;
+      grid-template-columns: auto minmax(220px, 1fr) auto auto auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px;
+      background: rgba(246, 247, 249, 0.94);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 180px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .brand span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .search {
+      min-width: 0;
+      width: 100%;
+      min-height: 38px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0 12px;
+      background: var(--panel);
+      color: var(--text);
+    }
+
+    .select {
+      min-height: 38px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0 10px;
+      background: var(--panel);
+      color: var(--text);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 32px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0 10px;
+      color: var(--muted);
+      background: var(--panel);
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--idle);
+    }
+
+    .dot.ok { background: var(--ok); }
+    .dot.warn { background: var(--warn); }
+    .dot.danger { background: var(--danger); }
+
+    .token-panel {
+      max-width: 760px;
+      margin: 64px auto;
+      padding: 24px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .token-panel h2 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    .token-panel p {
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .token-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .token-form input {
+      min-width: 0;
+      min-height: 42px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0 12px;
+    }
+
+    .notice {
+      margin-top: 14px;
+      border: 1px solid #fedf89;
+      background: #fffbeb;
+      color: #7a4b00;
+      border-radius: 8px;
+      padding: 12px;
+      line-height: 1.45;
+      font-size: 14px;
+    }
+
+    .content {
+      padding: 18px 0 36px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .metric {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 14px;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 24px;
+      line-height: 1;
+      margin-bottom: 5px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 24px 0 12px;
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .section-head p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+    }
+
+    .card {
+      display: flex;
+      flex-direction: column;
+      min-height: 220px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .card.attention {
+      border-color: #f79009;
+      box-shadow: 0 0 0 3px rgba(247, 144, 9, 0.12);
+    }
+
+    .card-main {
+      padding: 14px;
+      flex: 1;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .card-title a {
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .card-title a:hover { color: var(--accent-strong); }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      background: var(--panel-soft);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .badge.ok { color: var(--ok); background: var(--ok-bg); border-color: #bbf7d0; }
+    .badge.warn { color: var(--warn); background: var(--warn-bg); border-color: #fed7aa; }
+    .badge.danger { color: var(--danger); background: var(--danger-bg); border-color: #fecdca; }
+
+    .description {
+      min-height: 42px;
+      margin: 12px 0;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .meta-item {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      background: #fbfcfe;
+    }
+
+    .meta-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 3px;
+    }
+
+    .meta-item strong {
+      display: block;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      border-top: 1px solid var(--border);
+      background: #fbfcfe;
+    }
+
+    .actions a, .actions button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      border: 0;
+      border-right: 1px solid var(--border);
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12px;
+      padding: 0 8px;
+    }
+
+    .actions a:last-child, .actions button:last-child { border-right: 0; }
+    .actions a:hover, .actions button:hover { color: var(--accent-strong); background: #eef6f5; }
+
+    .empty, .message {
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 20px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .message {
+      border-style: solid;
+      text-align: left;
+      margin-bottom: 16px;
+    }
+
+    .message.error {
+      border-color: #fecdca;
+      background: var(--danger-bg);
+      color: var(--danger);
+    }
+
+    .message.warn {
+      border-color: #fed7aa;
+      background: var(--warn-bg);
+      color: var(--warn);
+    }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 900px) {
+      .topbar {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .brand, .search {
+        grid-column: 1 / -1;
+      }
+
+      .summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 600px) {
+      .app { padding: 10px; }
+      .topbar { grid-template-columns: 1fr; }
+      .summary { grid-template-columns: 1fr; }
+      .token-form { grid-template-columns: 1fr; }
+      .section-head { display: block; }
+      .card { min-height: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section id="tokenPanel" class="token-panel hidden">
+      <h2>Connect your GitHub repos</h2>
+      <p>
+        Paste a GitHub personal access token to load public and private repositories.
+        For a personal local dashboard, use a fine-grained read-only token for repository metadata, issues, pull requests, and Actions.
+      </p>
+      <form id="tokenForm" class="token-form">
+        <input id="tokenInput" type="password" autocomplete="off" placeholder="github_pat_... or ghp_..." aria-label="GitHub token">
+        <button class="primary" type="submit">Save token</button>
+      </form>
+      <div class="notice">
+        The token is stored in this browser's <code>localStorage</code> because you chose convenience for a local personal tool.
+        Use the dashboard's <strong>Forget token</strong> button when you want to remove it.
+      </div>
+      <p>
+        <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer">Create a fine-grained token</a>
+      </p>
+    </section>
+
+    <section id="dashboard" class="hidden">
+      <header class="topbar">
+        <div class="brand">
+          <h1>Repo Dashboard</h1>
+          <span id="lastUpdated">Not refreshed yet</span>
+        </div>
+        <input id="searchInput" class="search" type="search" placeholder="Search repos, owners, descriptions, languages">
+        <select id="ownerFilter" class="select" aria-label="Filter by owner">
+          <option value="all">All owners</option>
+        </select>
+        <span id="connectionStatus" class="status-pill"><span class="dot"></span><span>Disconnected</span></span>
+        <button id="refreshButton" type="button">Refresh</button>
+        <button id="forgetButton" type="button">Forget token</button>
+      </header>
+
+      <div class="content">
+        <div id="message" class="message hidden"></div>
+
+        <section class="summary" aria-label="Repository summary">
+          <div class="metric"><strong id="repoCount">0</strong><span>Repos</span></div>
+          <div class="metric"><strong id="attentionCount">0</strong><span>Need attention</span></div>
+          <div class="metric"><strong id="issueCount">0</strong><span>Open issues</span></div>
+          <div class="metric"><strong id="prCount">0</strong><span>Open PRs</span></div>
+          <div class="metric"><strong id="failingCount">0</strong><span>Failing checks</span></div>
+        </section>
+
+        <section>
+          <div class="section-head">
+            <div>
+              <h2>Needs attention</h2>
+              <p>Open work, failing Actions, or repositories that have gone quiet.</p>
+            </div>
+          </div>
+          <div id="attentionGrid" class="grid"></div>
+          <div id="attentionEmpty" class="empty hidden">Nothing needs attention in the current view.</div>
+        </section>
+
+        <section>
+          <div class="section-head">
+            <div>
+              <h2>All repos</h2>
+              <p>Every accessible repository, sorted by most recently pushed.</p>
+            </div>
+          </div>
+          <div id="allGrid" class="grid"></div>
+          <div id="allEmpty" class="empty hidden">No repositories match the current filters.</div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const STORAGE_TOKEN = 'repoDashboard.githubToken';
+    const STORAGE_CACHE = 'repoDashboard.cache';
+    const STALE_DAYS = 45;
+
+    const state = {
+      token: '',
+      repos: [],
+      owners: [],
+      loading: false,
+      query: '',
+      owner: 'all'
+    };
+
+    const els = {
+      tokenPanel: document.querySelector('#tokenPanel'),
+      dashboard: document.querySelector('#dashboard'),
+      tokenForm: document.querySelector('#tokenForm'),
+      tokenInput: document.querySelector('#tokenInput'),
+      searchInput: document.querySelector('#searchInput'),
+      ownerFilter: document.querySelector('#ownerFilter'),
+      connectionStatus: document.querySelector('#connectionStatus'),
+      refreshButton: document.querySelector('#refreshButton'),
+      forgetButton: document.querySelector('#forgetButton'),
+      lastUpdated: document.querySelector('#lastUpdated'),
+      message: document.querySelector('#message'),
+      repoCount: document.querySelector('#repoCount'),
+      attentionCount: document.querySelector('#attentionCount'),
+      issueCount: document.querySelector('#issueCount'),
+      prCount: document.querySelector('#prCount'),
+      failingCount: document.querySelector('#failingCount'),
+      attentionGrid: document.querySelector('#attentionGrid'),
+      allGrid: document.querySelector('#allGrid'),
+      attentionEmpty: document.querySelector('#attentionEmpty'),
+      allEmpty: document.querySelector('#allEmpty')
+    };
+
+    init();
+
+    function init() {
+      state.token = localStorage.getItem(STORAGE_TOKEN) || '';
+      bindEvents();
+
+      if (!state.token) {
+        showTokenPanel();
+        return;
+      }
+
+      showDashboard();
+      loadCache();
+      refreshData();
+    }
+
+    function bindEvents() {
+      els.tokenForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const token = els.tokenInput.value.trim();
+        if (!token) {
+          showMessage('Paste a GitHub token before saving.', 'warn');
+          return;
+        }
+        localStorage.setItem(STORAGE_TOKEN, token);
+        state.token = token;
+        els.tokenInput.value = '';
+        showDashboard();
+        refreshData();
+      });
+
+      els.refreshButton.addEventListener('click', refreshData);
+      els.forgetButton.addEventListener('click', forgetToken);
+      els.searchInput.addEventListener('input', () => {
+        state.query = els.searchInput.value.trim().toLowerCase();
+        render();
+      });
+      els.ownerFilter.addEventListener('change', () => {
+        state.owner = els.ownerFilter.value;
+        render();
+      });
+    }
+
+    function showTokenPanel() {
+      els.tokenPanel.classList.remove('hidden');
+      els.dashboard.classList.add('hidden');
+      setStatus('Disconnected', 'warn');
+    }
+
+    function showDashboard() {
+      els.tokenPanel.classList.add('hidden');
+      els.dashboard.classList.remove('hidden');
+      setStatus('Connected', 'ok');
+    }
+
+    async function refreshData() {
+      if (!state.token || state.loading) return;
+      state.loading = true;
+      els.refreshButton.disabled = true;
+      els.refreshButton.textContent = 'Refreshing...';
+      hideMessage();
+      setStatus('Refreshing', 'warn');
+
+      try {
+        const repos = await fetchRepositories();
+        const withRuns = await enrichWithWorkflowStatus(repos);
+        state.repos = withRuns;
+        state.owners = [...new Set(withRuns.map((repo) => repo.owner))].sort((a, b) => a.localeCompare(b));
+        saveCache();
+        updateOwnerFilter();
+        render();
+        setStatus('Connected', 'ok');
+        els.lastUpdated.textContent = `Updated ${new Date().toLocaleString()}`;
+      } catch (error) {
+        console.error(error);
+        setStatus('Refresh failed', 'danger');
+        showMessage(getFriendlyError(error), 'error');
+      } finally {
+        state.loading = false;
+        els.refreshButton.disabled = false;
+        els.refreshButton.textContent = 'Refresh';
+      }
+    }
+
+    async function fetchRepositories() {
+      const repos = [];
+      let cursor = null;
+
+      do {
+        const query = `
+          query RepoDashboard($cursor: String) {
+            viewer {
+              repositories(
+                first: 100,
+                after: $cursor,
+                ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
+                orderBy: {field: PUSHED_AT, direction: DESC}
+              ) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  name
+                  nameWithOwner
+                  url
+                  description
+                  isPrivate
+                  visibility
+                  pushedAt
+                  updatedAt
+                  sshUrl
+                  primaryLanguage { name color }
+                  defaultBranchRef { name }
+                  issues(states: OPEN) { totalCount }
+                  pullRequests(states: OPEN) { totalCount }
+                }
+              }
+            }
+          }
+        `;
+
+        const data = await githubGraphql(query, { cursor });
+        const connection = data.viewer.repositories;
+        repos.push(...connection.nodes.map(normalizeRepo));
+        cursor = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
+      } while (cursor);
+
+      return repos;
+    }
+
+    function normalizeRepo(repo) {
+      const [owner, name] = repo.nameWithOwner.split('/');
+      return {
+        id: repo.nameWithOwner,
+        owner,
+        name,
+        fullName: repo.nameWithOwner,
+        url: repo.url,
+        description: repo.description || '',
+        isPrivate: repo.isPrivate,
+        visibility: repo.visibility || (repo.isPrivate ? 'PRIVATE' : 'PUBLIC'),
+        pushedAt: repo.pushedAt,
+        updatedAt: repo.updatedAt,
+        sshUrl: repo.sshUrl,
+        language: repo.primaryLanguage?.name || 'Unknown',
+        languageColor: repo.primaryLanguage?.color || '#98a2b3',
+        defaultBranch: repo.defaultBranchRef?.name || 'default',
+        openIssues: repo.issues?.totalCount || 0,
+        openPrs: repo.pullRequests?.totalCount || 0,
+        workflow: { status: 'unknown', conclusion: null, text: 'Actions unknown' }
+      };
+    }
+
+    async function enrichWithWorkflowStatus(repos) {
+      const limit = 8;
+      const results = [];
+
+      for (let index = 0; index < repos.length; index += limit) {
+        const batch = repos.slice(index, index + limit);
+        const enriched = await Promise.all(batch.map(async (repo) => {
+          try {
+            const path = `/repos/${repo.fullName}/actions/runs?per_page=1&branch=${encodeURIComponent(repo.defaultBranch)}`;
+            const data = await githubRest(path);
+            const run = data.workflow_runs?.[0];
+            return { ...repo, workflow: normalizeRun(run) };
+          } catch (error) {
+            return { ...repo, workflow: { status: 'unknown', conclusion: null, text: 'Actions unavailable' } };
+          }
+        }));
+        results.push(...enriched);
+      }
+
+      return results;
+    }
+
+    function normalizeRun(run) {
+      if (!run) return { status: 'unknown', conclusion: null, text: 'No recent Actions' };
+      if (run.status !== 'completed') return { status: 'running', conclusion: null, text: 'Actions running' };
+      if (run.conclusion === 'success') return { status: 'success', conclusion: 'success', text: 'Actions passing' };
+      if (run.conclusion === 'failure' || run.conclusion === 'timed_out' || run.conclusion === 'cancelled') {
+        return { status: 'failure', conclusion: run.conclusion, text: `Actions ${run.conclusion.replace('_', ' ')}` };
+      }
+      return { status: 'unknown', conclusion: run.conclusion, text: `Actions ${run.conclusion || 'unknown'}` };
+    }
+
+    async function githubGraphql(query, variables) {
+      const response = await fetch('https://api.github.com/graphql', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${state.token}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/vnd.github+json'
+        },
+        body: JSON.stringify({ query, variables })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body.errors) {
+        throw makeGithubError(response, body);
+      }
+      return body.data;
+    }
+
+    async function githubRest(path) {
+      const response = await fetch(`https://api.github.com${path}`, {
+        headers: {
+          Authorization: `Bearer ${state.token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28'
+        }
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw makeGithubError(response, body);
+      return body;
+    }
+
+    function makeGithubError(response, body) {
+      const message = body?.message || body?.errors?.[0]?.message || response.statusText || 'GitHub request failed';
+      const error = new Error(message);
+      error.status = response.status;
+      error.rateLimitReset = response.headers?.get?.('x-ratelimit-reset');
+      return error;
+    }
+
+    function getFriendlyError(error) {
+      if (error.status === 401) return 'GitHub rejected the token. Use Forget token, then paste a valid token.';
+      if (error.status === 403 && error.rateLimitReset) {
+        const reset = new Date(Number(error.rateLimitReset) * 1000).toLocaleTimeString();
+        return `GitHub rate limit hit. Try again after ${reset}.`;
+      }
+      if (error.status === 403) return `GitHub blocked the request: ${error.message}`;
+      return error.message || 'Something went wrong while loading GitHub data.';
+    }
+
+    function render() {
+      const repos = filteredRepos();
+      const attention = repos.filter(needsAttention);
+      const totals = getTotals(repos, attention);
+
+      els.repoCount.textContent = totals.repos;
+      els.attentionCount.textContent = totals.attention;
+      els.issueCount.textContent = totals.issues;
+      els.prCount.textContent = totals.prs;
+      els.failingCount.textContent = totals.failing;
+
+      renderGrid(els.attentionGrid, attention, true);
+      renderGrid(els.allGrid, repos, false);
+
+      els.attentionEmpty.classList.toggle('hidden', attention.length > 0);
+      els.allEmpty.classList.toggle('hidden', repos.length > 0);
+    }
+
+    function filteredRepos() {
+      return state.repos.filter((repo) => {
+        const matchesOwner = state.owner === 'all' || repo.owner === state.owner;
+        const haystack = [
+          repo.fullName,
+          repo.description,
+          repo.language,
+          repo.defaultBranch,
+          repo.visibility
+        ].join(' ').toLowerCase();
+        const matchesQuery = !state.query || haystack.includes(state.query);
+        return matchesOwner && matchesQuery;
+      });
+    }
+
+    function needsAttention(repo) {
+      return repo.openIssues > 0 || repo.openPrs > 0 || repo.workflow.status === 'failure' || isStale(repo.pushedAt);
+    }
+
+    function getTotals(repos, attention) {
+      return {
+        repos: repos.length,
+        attention: attention.length,
+        issues: repos.reduce((sum, repo) => sum + repo.openIssues, 0),
+        prs: repos.reduce((sum, repo) => sum + repo.openPrs, 0),
+        failing: repos.filter((repo) => repo.workflow.status === 'failure').length
+      };
+    }
+
+    function renderGrid(container, repos, attentionGrid) {
+      container.innerHTML = repos.map((repo) => renderCard(repo, attentionGrid)).join('');
+      container.querySelectorAll('[data-copy]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(button.dataset.copy);
+            button.textContent = 'Copied';
+            setTimeout(() => { button.textContent = 'Clone'; }, 1200);
+          } catch (error) {
+            showMessage(`Clone URL: ${button.dataset.copy}`, 'warn');
+          }
+        });
+      });
+    }
+
+    function renderCard(repo, attentionGrid) {
+      const attentionClass = attentionGrid && needsAttention(repo) ? ' attention' : '';
+      const workflowClass = getWorkflowClass(repo.workflow.status);
+      const stale = isStale(repo.pushedAt);
+      const issueClass = repo.openIssues > 0 ? 'warn' : 'ok';
+      const prClass = repo.openPrs > 0 ? 'warn' : 'ok';
+
+      return `
+        <article class="card${attentionClass}">
+          <div class="card-main">
+            <div class="card-title">
+              <a href="${escapeAttr(repo.url)}" target="_blank" rel="noreferrer">${escapeHtml(repo.fullName)}</a>
+              <span class="badge">${repo.isPrivate ? 'Private' : 'Public'}</span>
+            </div>
+            <div class="badge-row">
+              <span class="badge" title="Primary language"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(repo.languageColor)};margin-right:6px"></span>${escapeHtml(repo.language)}</span>
+              <span class="badge ${issueClass}">${repo.openIssues} issues</span>
+              <span class="badge ${prClass}">${repo.openPrs} PRs</span>
+              <span class="badge ${workflowClass}">${escapeHtml(repo.workflow.text)}</span>
+              ${stale ? '<span class="badge warn">stale</span>' : ''}
+            </div>
+            <p class="description">${escapeHtml(repo.description || 'No description.')}</p>
+            <div class="meta">
+              <div class="meta-item"><span>Last push</span><strong>${formatDate(repo.pushedAt)}</strong></div>
+              <div class="meta-item"><span>Default branch</span><strong>${escapeHtml(repo.defaultBranch)}</strong></div>
+              <div class="meta-item"><span>Owner</span><strong>${escapeHtml(repo.owner)}</strong></div>
+              <div class="meta-item"><span>Visibility</span><strong>${escapeHtml(formatVisibility(repo.visibility))}</strong></div>
+            </div>
+          </div>
+          <nav class="actions" aria-label="${escapeAttr(repo.fullName)} links">
+            <a href="${escapeAttr(repo.url)}" target="_blank" rel="noreferrer">Repo</a>
+            <a href="${escapeAttr(repo.url)}/issues" target="_blank" rel="noreferrer">Issues</a>
+            <a href="${escapeAttr(repo.url)}/pulls" target="_blank" rel="noreferrer">PRs</a>
+            <a href="${escapeAttr(repo.url)}/actions" target="_blank" rel="noreferrer">Actions</a>
+            <button type="button" data-copy="${escapeAttr(repo.sshUrl)}">Clone</button>
+          </nav>
+        </article>
+      `;
+    }
+
+    function updateOwnerFilter() {
+      const current = state.owner;
+      els.ownerFilter.innerHTML = '<option value="all">All owners</option>' + state.owners
+        .map((owner) => `<option value="${escapeAttr(owner)}">${escapeHtml(owner)}</option>`)
+        .join('');
+      state.owner = state.owners.includes(current) ? current : 'all';
+      els.ownerFilter.value = state.owner;
+    }
+
+    function saveCache() {
+      localStorage.setItem(STORAGE_CACHE, JSON.stringify({
+        repos: state.repos,
+        savedAt: new Date().toISOString()
+      }));
+    }
+
+    function loadCache() {
+      try {
+        const cached = JSON.parse(localStorage.getItem(STORAGE_CACHE) || 'null');
+        if (!cached?.repos?.length) return;
+        state.repos = cached.repos;
+        state.owners = [...new Set(state.repos.map((repo) => repo.owner))].sort((a, b) => a.localeCompare(b));
+        updateOwnerFilter();
+        render();
+        els.lastUpdated.textContent = `Cached ${new Date(cached.savedAt).toLocaleString()}`;
+        showMessage('Showing cached data while refreshing from GitHub.', 'warn');
+      } catch (error) {
+        localStorage.removeItem(STORAGE_CACHE);
+      }
+    }
+
+    function forgetToken() {
+      localStorage.removeItem(STORAGE_TOKEN);
+      localStorage.removeItem(STORAGE_CACHE);
+      state.token = '';
+      state.repos = [];
+      state.owners = [];
+      els.searchInput.value = '';
+      state.query = '';
+      state.owner = 'all';
+      showTokenPanel();
+    }
+
+    function setStatus(text, level) {
+      const dot = els.connectionStatus.querySelector('.dot');
+      const label = els.connectionStatus.querySelector('span:last-child');
+      dot.className = `dot ${level || ''}`.trim();
+      label.textContent = text;
+    }
+
+    function showMessage(text, type) {
+      els.message.textContent = text;
+      els.message.className = `message ${type || ''}`;
+      els.message.classList.remove('hidden');
+    }
+
+    function hideMessage() {
+      els.message.textContent = '';
+      els.message.className = 'message hidden';
+    }
+
+    function isStale(value) {
+      if (!value) return false;
+      const age = Date.now() - new Date(value).getTime();
+      return age > STALE_DAYS * 24 * 60 * 60 * 1000;
+    }
+
+    function formatDate(value) {
+      if (!value) return 'Unknown';
+      const date = new Date(value);
+      const days = Math.floor((Date.now() - date.getTime()) / (24 * 60 * 60 * 1000));
+      if (days <= 0) return 'today';
+      if (days === 1) return 'yesterday';
+      if (days < 30) return `${days} days ago`;
+      return date.toLocaleDateString();
+    }
+
+    function formatVisibility(value) {
+      return String(value || 'unknown').toLowerCase().replace(/^\w/, (letter) => letter.toUpperCase());
+    }
+
+    function getWorkflowClass(status) {
+      if (status === 'success') return 'ok';
+      if (status === 'failure') return 'danger';
+      if (status === 'running') return 'warn';
+      return '';
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value || '');
+    }
+  </script>
+</body>
+</html>
