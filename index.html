@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GitHub Repo Dashboard</title>
+  <link rel="icon" href="data:,">
   <style>
     :root {
       --bg: #f6f7f9;
@@ -402,6 +403,92 @@
 
     .hidden { display: none !important; }
 
+    .chat-shell {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 40;
+      width: min(420px, calc(100vw - 24px));
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .chat-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: #fbfcfe;
+    }
+
+    .chat-head strong {
+      font-size: 14px;
+    }
+
+    .chat-body {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 320px;
+      overflow: auto;
+      padding: 12px;
+    }
+
+    .chat-message {
+      border-radius: 8px;
+      padding: 9px 10px;
+      line-height: 1.42;
+      font-size: 13px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .chat-message.user {
+      align-self: flex-end;
+      max-width: 88%;
+      background: #e6f4f1;
+      color: #134e4a;
+    }
+
+    .chat-message.assistant {
+      align-self: flex-start;
+      max-width: 96%;
+      border: 1px solid var(--border);
+      background: #fbfcfe;
+      color: var(--text);
+    }
+
+    .chat-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      padding: 10px;
+      border-top: 1px solid var(--border);
+      background: #fbfcfe;
+    }
+
+    .chat-form input {
+      min-width: 0;
+      min-height: 38px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0 10px;
+    }
+
+    .chat-toggle {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 39;
+      min-width: 120px;
+      box-shadow: var(--shadow);
+    }
+
     @media (max-width: 900px) {
       .topbar {
         grid-template-columns: 1fr 1fr;
@@ -423,6 +510,11 @@
       .token-form { grid-template-columns: 1fr; }
       .section-head { display: block; }
       .card { min-height: 0; }
+      .chat-shell {
+        right: 10px;
+        bottom: 10px;
+        width: calc(100vw - 20px);
+      }
     }
   </style>
 </head>
@@ -496,6 +588,21 @@
         </section>
       </div>
     </section>
+
+    <button id="chatToggle" class="chat-toggle primary hidden" type="button">Chat</button>
+    <section id="chatShell" class="chat-shell hidden" aria-label="GitHub command chat">
+      <div class="chat-head">
+        <strong>GitHub commands</strong>
+        <button id="chatClose" type="button" aria-label="Close chat">Close</button>
+      </div>
+      <div id="chatBody" class="chat-body">
+        <div class="chat-message assistant">Ask read-only things like "show failing repos", "show open PRs", or "summarize repo-name".</div>
+      </div>
+      <form id="chatForm" class="chat-form">
+        <input id="chatInput" type="text" autocomplete="off" placeholder="Ask about repos or PRs">
+        <button id="chatSend" class="primary" type="submit">Send</button>
+      </form>
+    </section>
   </main>
 
   <script>
@@ -532,7 +639,14 @@
       attentionGrid: document.querySelector('#attentionGrid'),
       allGrid: document.querySelector('#allGrid'),
       attentionEmpty: document.querySelector('#attentionEmpty'),
-      allEmpty: document.querySelector('#allEmpty')
+      allEmpty: document.querySelector('#allEmpty'),
+      chatToggle: document.querySelector('#chatToggle'),
+      chatShell: document.querySelector('#chatShell'),
+      chatClose: document.querySelector('#chatClose'),
+      chatBody: document.querySelector('#chatBody'),
+      chatForm: document.querySelector('#chatForm'),
+      chatInput: document.querySelector('#chatInput'),
+      chatSend: document.querySelector('#chatSend')
     };
 
     init();
@@ -568,6 +682,9 @@
 
       els.refreshButton.addEventListener('click', refreshData);
       els.forgetButton.addEventListener('click', forgetToken);
+      els.chatToggle.addEventListener('click', () => setChatOpen(true));
+      els.chatClose.addEventListener('click', () => setChatOpen(false));
+      els.chatForm.addEventListener('submit', sendChatMessage);
       els.searchInput.addEventListener('input', () => {
         state.query = els.searchInput.value.trim().toLowerCase();
         render();
@@ -581,12 +698,15 @@
     function showTokenPanel() {
       els.tokenPanel.classList.remove('hidden');
       els.dashboard.classList.add('hidden');
+      els.chatShell.classList.add('hidden');
+      els.chatToggle.classList.add('hidden');
       setStatus('Disconnected', 'warn');
     }
 
     function showDashboard() {
       els.tokenPanel.classList.add('hidden');
       els.dashboard.classList.remove('hidden');
+      els.chatToggle.classList.remove('hidden');
       setStatus('Connected', 'ok');
     }
 
@@ -617,6 +737,66 @@
         els.refreshButton.disabled = false;
         els.refreshButton.textContent = 'Refresh';
       }
+    }
+
+    async function sendChatMessage(event) {
+      event.preventDefault();
+      const message = els.chatInput.value.trim();
+      if (!message) return;
+
+      appendChat('user', message);
+      els.chatInput.value = '';
+      els.chatSend.disabled = true;
+      appendChat('assistant', 'Thinking...');
+
+      try {
+        const response = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message,
+            githubToken: state.token,
+            repos: state.repos
+          })
+        });
+        const body = await response.json().catch(() => ({}));
+        removeLastThinkingMessage();
+
+        if (!response.ok) {
+          appendChat('assistant', body.error || 'The local command server returned an error.');
+          return;
+        }
+
+        appendChat('assistant', body.text || 'No response.');
+        if (body.kind === 'open' && body.url) {
+          window.open(body.url, '_blank', 'noreferrer');
+        }
+      } catch (error) {
+        removeLastThinkingMessage();
+        appendChat('assistant', 'Start the local server to use chat commands. Run npm start or use the launcher.');
+      } finally {
+        els.chatSend.disabled = false;
+        els.chatInput.focus();
+      }
+    }
+
+    function setChatOpen(open) {
+      els.chatShell.classList.toggle('hidden', !open);
+      els.chatToggle.classList.toggle('hidden', open);
+      if (open) els.chatInput.focus();
+    }
+
+    function appendChat(role, text) {
+      const node = document.createElement('div');
+      node.className = `chat-message ${role}`;
+      node.textContent = text;
+      els.chatBody.appendChild(node);
+      els.chatBody.scrollTop = els.chatBody.scrollHeight;
+    }
+
+    function removeLastThinkingMessage() {
+      const last = els.chatBody.lastElementChild;
+      if (last?.textContent === 'Thinking...') last.remove();
     }
 
     async function fetchRepositories() {
