@@ -20,6 +20,8 @@ The app is intentionally simple: open `index.html`, paste a GitHub token, and it
 
 Open `index.html` in your browser.
 
+On Windows, you can also double-click `launch-dashboard.bat`.
+
 For private repos, create a GitHub personal access token:
 
 1. Go to <https://github.com/settings/personal-access-tokens>.
