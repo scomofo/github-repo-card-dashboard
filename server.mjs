@@ -22,6 +22,11 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && request.url === '/api/health') {
+      sendJson(response, 200, { ok: true, openai: Boolean(openaiApiKey), model: openaiApiKey ? openaiModel : '' });
+      return;
+    }
+
     if (request.method === 'GET') {
       await serveStatic(request, response);
       return;
@@ -77,7 +82,8 @@ async function commandFromOpenAI(message, repos) {
   const instructions = [
     'You translate short user requests into one safe JSON command for a GitHub repo dashboard.',
     'Only return JSON. Do not use markdown.',
-    'Allowed actions: help, list_failing_repos, list_issues, list_pull_requests, list_stale_repos, open_repo, summarize_repo.',
+    'Allowed actions: help, dashboard_overview, list_failing_repos, list_issues, list_pull_requests, list_review_requests, list_stale_repos, list_active_repos, open_repo, summarize_repo.',
+    'Use dashboard_overview for general "how are things" questions, list_review_requests for PRs waiting on review, list_active_repos for what changed recently.',
     'Commands are read-only. If the user asks to create, delete, merge, close, push, edit, or mutate anything, return {"action":"help"}.',
     'When a repo is mentioned, use the closest repo fullName or name from the context.'
   ].join(' ');
@@ -109,10 +115,13 @@ async function commandFromOpenAI(message, repos) {
                 type: 'string',
                 enum: [
                   'help',
+                  'dashboard_overview',
                   'list_failing_repos',
                   'list_issues',
                   'list_pull_requests',
+                  'list_review_requests',
                   'list_stale_repos',
+                  'list_active_repos',
                   'open_repo',
                   'summarize_repo'
                 ]
@@ -195,5 +204,10 @@ function contentType(path) {
   if (extension === '.js' || extension === '.mjs') return 'text/javascript; charset=utf-8';
   if (extension === '.css') return 'text/css; charset=utf-8';
   if (extension === '.md') return 'text/markdown; charset=utf-8';
+  if (extension === '.json') return 'application/json; charset=utf-8';
+  if (extension === '.png') return 'image/png';
+  if (extension === '.svg') return 'image/svg+xml';
+  if (extension === '.ico') return 'image/x-icon';
+  if (extension === '.webmanifest') return 'application/manifest+json';
   return 'application/octet-stream';
 }
