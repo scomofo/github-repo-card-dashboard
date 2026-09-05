@@ -243,7 +243,7 @@ test('empty remote clones remain inspectable and cannot be accidentally updated'
   await assert.rejects(f.manager.runAction({ fullName, action: 'update' }), /no local commits/);
 });
 
-test('Git timeouts stop the operation and release the action lock', { skip: process.platform === 'win32' }, async (t) => {
+test('Git timeouts stop the process group and release the action lock', { skip: process.platform === 'win32' }, async (t) => {
   const f = await fixture(t);
   const bin = path.join(f.temp, 'bin');
   await mkdir(bin);
@@ -270,12 +270,43 @@ else {
   await assert.rejects(manager.runAction({ fullName, action: 'clone' }), { statusCode: 504 });
   assert.ok(Date.now() - start < 2500, 'the timeout stops Git before its own delayed exit');
   assert.equal(await readFile(started, 'utf8'), 'started');
-  // The Linux tool sandbox does not expose process groups. The product target
-  // is macOS, where the detached group must also terminate helper descendants.
-  if (process.platform === 'darwin') {
-    await delay(1100);
-    await assert.rejects(readFile(completed), { code: 'ENOENT' });
-  }
+  await delay(1100);
+  await assert.rejects(readFile(completed), { code: 'ENOENT' });
   // A new action gets past the lock and fails for the actual missing checkout.
+  await assert.rejects(manager.runAction({ fullName, action: 'update' }), { statusCode: 404 });
+});
+
+test('Git output overflow stops the process group, sanitizes errors, and releases the lock', { skip: process.platform === 'win32' }, async (t) => {
+  const f = await fixture(t);
+  const bin = path.join(f.temp, 'bin');
+  await mkdir(bin);
+  const completed = path.join(f.temp, 'helper-survived');
+  const helper = `process.send('ready'); setTimeout(() => { try { require('node:fs').writeFileSync(${JSON.stringify(completed)}, 'survived'); } catch {} }, 1000);`;
+  await writeFile(path.join(bin, 'git'), `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes('--version')) console.log('git version test');
+else if (args.includes('--get-url')) console.log(args.at(-1));
+else {
+  const helper = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(helper)}], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  helper.on('message', () => process.stderr.write('private-token-never-expose ' + 'x'.repeat(2 * 1024 * 1024)));
+  setTimeout(() => process.exit(1), 3000);
+}
+`);
+  await chmod(path.join(bin, 'git'), 0o755);
+  const originalPath = process.env.PATH;
+  let manager;
+  try {
+    process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
+    manager = createLocalRepoManager({ ...f.options, timeoutMs: 5000 });
+  } finally { process.env.PATH = originalPath; }
+  const start = Date.now();
+  await assert.rejects(manager.runAction({ fullName, action: 'clone' }), (error) => {
+    assert.equal(error.statusCode, 502);
+    assert.doesNotMatch(error.message, /private-token-never-expose/);
+    return true;
+  });
+  assert.ok(Date.now() - start < 2500, 'the output cap stops Git before its delayed exit or timeout');
+  await delay(1100);
+  await assert.rejects(readFile(completed), { code: 'ENOENT' });
   await assert.rejects(manager.runAction({ fullName, action: 'update' }), { statusCode: 404 });
 });

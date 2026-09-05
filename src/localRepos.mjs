@@ -1,4 +1,4 @@
-import { execFile as nodeExecFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { lstat, mkdir, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -6,27 +6,68 @@ const ACTIONS = new Set(['clone', 'update', 'open', 'terminal']);
 
 function execBounded(file, args, options) {
   return new Promise((resolve, reject) => {
-    let timedOut = false;
+    const stdout = [];
+    const stderr = [];
+    const sizes = { stdout: 0, stderr: 0 };
+    let failure;
+    let settled = false;
+    const child = spawn(file, args, {
+      cwd: options.cwd, env: options.env, windowsHide: options.windowsHide,
+      detached: process.platform !== 'win32', shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     const stop = () => {
       try {
         if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL');
         else child.kill('SIGKILL');
       } catch {
-        // Some constrained runtimes do not expose process groups. Still stop Git
-        // itself; on macOS the detached group also stops SSH and helper children.
+        // If a process group has already exited or is unavailable, still stop
+        // the direct child. POSIX detached groups include SSH/helper children.
         try { child.kill('SIGKILL'); } catch { /* Already exited. */ }
       }
     };
-    const child = nodeExecFile(file, args, { ...options, timeout: 0, detached: process.platform !== 'win32', shell: false }, (error, stdout, stderr) => {
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      const output = {
+        stdout: Buffer.concat(stdout).toString(options.encoding || 'utf8'),
+        stderr: Buffer.concat(stderr).toString(options.encoding || 'utf8'),
+      };
       if (error) {
         stop();
-        if (timedOut) error.code = 'ETIMEDOUT';
-        error.stderr = stderr;
+        error.stderr = output.stderr;
         reject(error);
-      } else resolve({ stdout, stderr });
+      } else resolve(output);
+    };
+    const abort = (error) => {
+      failure ||= error;
+      stop();
+      // A descendant can inherit a pipe, or deliberately detach itself. Closing
+      // our streams ensures it cannot keep the action waiting after Git exits.
+      child.stdout.destroy();
+      child.stderr.destroy();
+    };
+    const collect = (name, chunks, chunk) => {
+      if (failure) return;
+      const remaining = options.maxBuffer - sizes[name];
+      if (chunk.length > remaining) {
+        if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
+        abort(Object.assign(new Error('Git output exceeded its limit.'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }));
+      } else {
+        sizes[name] += chunk.length;
+        chunks.push(chunk);
+      }
+    };
+    child.stdout.on('data', (chunk) => collect('stdout', stdout, chunk));
+    child.stderr.on('data', (chunk) => collect('stderr', stderr, chunk));
+    child.once('error', (error) => finish(failure || error));
+    child.once('close', (code, signal) => {
+      finish(failure || (code === 0 ? null : Object.assign(new Error('Git exited unsuccessfully.'), { code, signal })));
     });
-    const timer = setTimeout(() => { timedOut = true; stop(); }, options.timeout);
+    const timer = setTimeout(() => {
+      abort(Object.assign(new Error('Git operation timed out.'), { code: 'ETIMEDOUT' }));
+    }, options.timeout);
     timer.unref();
   });
 }
