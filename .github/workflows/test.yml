@@ -1,0 +1,60 @@
+name: Test and macOS install
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm test
+      - run: bash -n launch-dashboard.command install-macos.command
+
+  macos-install:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm test
+      - name: Install an app from a checkout with spaces in its path
+        env:
+          REPO_DASHBOARD_NO_OPEN: '1'
+        run: |
+          mkdir -p "$RUNNER_TEMP/checkout with spaces"
+          cp -R . "$RUNNER_TEMP/checkout with spaces/"
+          bash "$RUNNER_TEMP/checkout with spaces/install-macos.command"
+          test -d "$HOME/Applications/Repo Dashboard.app"
+          test -f "$HOME/Applications/Repo Dashboard.app/Contents/Resources/dashboard.icns"
+          test -f "$HOME/Library/Application Support/Repo Dashboard/src/localRepos.mjs"
+          test ! -e "$HOME/Library/Application Support/Repo Dashboard/.git"
+          plutil -lint "$HOME/Applications/Repo Dashboard.app/Contents/Info.plist"
+          codesign --verify --deep --strict "$HOME/Applications/Repo Dashboard.app"
+      - name: Verify launch reuse, safe update, and shutdown
+        env:
+          REPO_DASHBOARD_NO_OPEN: '1'
+        run: |
+          launcher="$HOME/Library/Application Support/Repo Dashboard/launch-dashboard.command"
+          "$launcher"
+          first_pid=$(node --input-type=module -e 'const h=await(await fetch("http://127.0.0.1:8787/api/health")).json(); if(h.app!=="repo-dashboard" || !h.localRepos) process.exit(1); console.log(h.pid)')
+          "$launcher" &
+          "$launcher" &
+          wait
+          second_pid=$(node --input-type=module -e 'console.log((await(await fetch("http://127.0.0.1:8787/api/health")).json()).pid)')
+          test "$first_pid" = "$second_pid"
+          bash "$RUNNER_TEMP/checkout with spaces/install-macos.command"
+          "$launcher"
+          "$launcher" --stop
+          node --input-type=module -e 'try { await fetch("http://127.0.0.1:8787/api/health"); process.exit(1); } catch {}'
+      - name: Show logs if verification failed
+        if: failure()
+        run: cat "$HOME/Library/Logs/Repo Dashboard/server.log" || true

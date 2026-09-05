@@ -1258,6 +1258,50 @@
       font-size: 12px;
     }
 
+    .local-panel {
+      padding: 22px;
+      margin: 8px 0 20px;
+      border: 1px solid var(--border);
+      border-top: 3px solid var(--accent);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow-sm);
+    }
+    .local-heading, .local-toolbar, .local-state-row, .local-buttons {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .local-heading { justify-content: space-between; align-items: flex-start; }
+    .local-heading h2 { margin: 0 0 6px; font-size: 22px; letter-spacing: -0.03em; }
+    .local-heading p, .local-help, .local-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .local-metrics { display: grid; grid-template-columns: minmax(200px, 2fr) 1fr 1fr; gap: 12px; margin: 20px 0 16px; }
+    .local-metric { padding: 12px 14px; background: var(--panel-soft); border-radius: var(--radius-sm); min-width: 0; }
+    .local-metric span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    .local-metric strong { font-size: 18px; }
+    .local-metric code, .local-path { font-size: 12px; overflow-wrap: anywhere; }
+    .local-toolbar { margin: 0 0 12px; }
+    .local-help { margin-top: 10px; }
+    .local-help summary { cursor: pointer; color: var(--accent-text); width: fit-content; }
+    .local-help p { margin: 8px 0 0; }
+    .local-launcher { margin: 14px 0 0; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--info-bg); color: var(--text); font-size: 13px; line-height: 1.7; }
+    .local-progress { margin: 12px 0 0; font-size: 13px; line-height: 1.6; }
+    .local-results { max-height: 210px; overflow-y: auto; padding-left: 22px; margin: 8px 0 0; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+    .local-results:empty { display: none; }
+    .local-results .error { color: var(--danger); }
+    .local-results .success { color: var(--ok); }
+    .local-repo { padding: 12px 14px; background: var(--panel-soft); border-top: 1px solid var(--border); }
+    .local-state-row { gap: 7px; margin-bottom: 9px; font-size: 12px; color: var(--muted); }
+    .local-buttons { gap: 7px; }
+    .local-buttons button { min-height: 34px; padding: 0 10px; font-size: 12px; }
+    .local-path { display: block; color: var(--muted); margin: 9px 0; }
+    .local-repo .local-note { margin-bottom: 10px; font-size: 12px; }
+    .drawer-section .local-repo { border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    @media (max-width: 760px) {
+      .local-panel { padding: 16px; }
+      .local-metrics { grid-template-columns: 1fr 1fr; }
+      .local-metric:first-child { grid-column: 1 / -1; }
+      .local-toolbar button { flex: 1 1 auto; }
+    }
+
     @media (max-width: 1180px) {
       .topbar { display: flex; flex-wrap: wrap; }
       .topbar .search-wrap { flex: 1 1 240px; }
@@ -1322,30 +1366,68 @@
   </svg>
 
   <main class="app" id="app">
+    <section id="localPanel" class="local-panel" aria-labelledby="localTitle">
+      <div class="local-heading">
+        <div>
+          <h2 id="localTitle">On this Mac</h2>
+          <p>Your GitHub projects, ready to work on. Clone a repo once, then check for updates here.</p>
+        </div>
+        <span id="localConnection" class="badge">Checking local manager…</span>
+      </div>
+      <div class="local-metrics">
+        <div class="local-metric"><span>Repository folder</span><code id="localRoot">Available when the local manager connects</code></div>
+        <div class="local-metric"><span>Installed from your repo list</span><strong id="localInstalled">—</strong></div>
+        <div class="local-metric"><span>Ready to check &amp; update</span><strong id="localReady">—</strong></div>
+      </div>
+      <div class="local-toolbar">
+        <button id="localScan" type="button" disabled><svg class="icon"><use href="#i-search"/></svg>Scan local status</button>
+        <button id="localUpdateAll" class="primary" type="button" disabled><svg class="icon"><use href="#i-refresh"/></svg>Update installed</button>
+        <button id="localReconnect" class="ghost hidden" type="button">Reconnect</button>
+      </div>
+      <p id="localHint" class="local-note">Connect GitHub below to load your repositories.</p>
+      <div id="localLauncher" class="local-launcher hidden">
+        Double-click <strong>install-macos.command</strong> in the downloaded dashboard folder once. Then open
+        <strong>Repo Dashboard</strong> from your Applications folder whenever you want to clone or update repositories.
+        You can also double-click <strong>launch-dashboard.command</strong> in the project folder.
+        Opening <code>index.html</code> directly only shows the GitHub overview; local actions need the launcher.
+      </div>
+      <details class="local-help">
+        <summary>How cloning and updates work</summary>
+        <p><strong>Clone to Mac</strong> downloads a repository's source code. Follow that project's README to install dependencies or run its app.</p>
+        <p><strong>Scan local status</strong> checks files on your Mac using the last fetched Git information.
+          <strong>Update installed</strong> contacts GitHub and updates clean, eligible checkouts one at a time across your full loaded repo list.
+          Local edits, local commits, and conflicting histories are left for you to resolve in Terminal. Each result appears below.</p>
+        <p>Your browser token reads GitHub data. Private clones and updates use your Mac's existing Git credentials;
+          if needed, sign in with <code>gh auth login</code> and run <code>gh auth setup-git</code> in Terminal.</p>
+      </details>
+      <p id="localProgress" class="local-progress" role="status" aria-live="polite"></p>
+      <ol id="localResults" class="local-results" role="log" aria-label="Local repository operation results" aria-live="polite" aria-relevant="additions"></ol>
+    </section>
     <section id="tokenPanel" class="token-panel hidden">
       <div class="token-hero">
         <img src="./favicon.png" alt="">
         <div>
           <h2>Connect your GitHub repos</h2>
-          <p style="margin:0">A private, local dashboard for every repository you can reach. Nothing leaves this browser except calls to GitHub.</p>
+          <p style="margin:0">See your GitHub projects, clone them to this Mac, and safely keep their source code up to date.</p>
         </div>
       </div>
       <div class="steps">
         <div class="step"><span class="num">1</span><b>Create a token</b>Use a fine-grained personal access token with read-only access.</div>
         <div class="step"><span class="num">2</span><b>Grant read scopes</b>Metadata, Contents, Issues, Pull requests and Actions let every card fill in.</div>
-        <div class="step"><span class="num">3</span><b>Paste it below</b>The dashboard loads repos, CI status, PR review state and more.</div>
+        <div class="step"><span class="num">3</span><b>Choose a repo to clone</b>Connect below, then use Clone to Mac on any repository card.</div>
       </div>
       <form id="tokenForm" class="token-form">
         <input id="tokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_... or ghp_..." aria-label="GitHub token">
         <button class="primary" type="submit"><svg class="icon"><use href="#i-zap"/></svg>Connect</button>
       </form>
       <label class="token-options">
-        <input id="rememberToken" type="checkbox" checked>
+        <input id="rememberToken" type="checkbox">
         Remember this token in this browser (otherwise it is forgotten when the tab closes)
       </label>
       <div class="notice">
         A remembered token is stored in this browser's <code>localStorage</code> for convenience on a personal machine.
         Use <strong>Forget token</strong> in the dashboard to remove it and the cached repo data at any time.
+        Repo data is loaded from GitHub. Local actions go to the manager on this Mac. Optional chat sends your question and repo context to the local server and, when configured, OpenAI.
       </div>
       <p>
         <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">Create a fine-grained token on GitHub</a>
@@ -1498,6 +1580,7 @@
 
     const QUICK_FILTERS = [
       { key: 'all', label: 'All', test: () => true },
+      { key: 'installed', label: 'On this Mac', test: (repo) => Boolean(state.local.repos.get(repo.fullName)?.installed) },
       { key: 'attention', label: 'Needs attention', tone: 'warn', test: (repo) => repo.attention.score > 0 },
       { key: 'failing', label: 'Failing CI', tone: 'danger', test: (repo) => repo.workflow.status === 'failure' },
       { key: 'review', label: 'Review needed', tone: 'warn', test: (repo) => repo.reviewNeeded > 0 },
@@ -1541,7 +1624,8 @@
       updatedAt: null,
       fromCache: false,
       drawerRepo: null,
-      server: { checked: false, online: false, openai: false, model: '' }
+      server: { checked: false, online: false, openai: false, model: '', localRepos: false, csrfToken: '', platform: '' },
+      local: { root: '', gitAvailable: false, repos: new Map(), scanning: false, scanned: false, pending: new Set(), bulk: false }
     };
 
     const els = {};
@@ -1552,7 +1636,9 @@
       'sortSelect', 'autoRefreshSelect', 'densityComfortable', 'densityCompact', 'attentionSection', 'attentionCountBadge',
       'attentionGrid', 'attentionEmpty', 'allTitle', 'allCountBadge', 'allSubtitle', 'allGrid', 'allEmpty', 'rateNote',
       'drawerBackdrop', 'drawer', 'drawerHead', 'drawerBody', 'chatToggle', 'chatShell', 'chatMode', 'chatClose',
-      'chatBody', 'chatSuggestions', 'chatForm', 'chatInput', 'chatSend', 'toast', 'app'
+      'chatBody', 'chatSuggestions', 'chatForm', 'chatInput', 'chatSend', 'toast', 'app',
+      'localPanel', 'localConnection', 'localRoot', 'localInstalled', 'localReady', 'localScan', 'localUpdateAll',
+      'localReconnect', 'localHint', 'localLauncher', 'localProgress', 'localResults'
     ].forEach((id) => { els[id] = document.getElementById(id); });
 
     let autoRefreshTimer = null;
@@ -1600,6 +1686,9 @@
       });
 
       els.refreshButton.addEventListener('click', () => refreshData());
+      els.localScan.addEventListener('click', () => scanLocalRepos());
+      els.localUpdateAll.addEventListener('click', updateInstalledRepos);
+      els.localReconnect.addEventListener('click', () => checkServer());
       els.forgetButton.addEventListener('click', forgetToken);
       els.themeButton.addEventListener('click', cycleTheme);
       mediaDark.addEventListener('change', applyTheme);
@@ -1660,6 +1749,13 @@
       });
 
       document.addEventListener('click', async (event) => {
+        const localButton = event.target.closest('button[data-local-action]');
+        if (localButton) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!localButton.disabled) await runLocalAction(localButton.dataset.localRepo, localButton.dataset.localAction);
+          return;
+        }
         const copy = event.target.closest('[data-copy]');
         if (!copy) return;
         event.stopPropagation();
@@ -1797,6 +1893,7 @@
         rebuildFacets();
         saveCache();
         render();
+        scanLocalRepos({ quiet: true });
         setStatus('Connected', 'ok');
         updateLastUpdatedLabel();
         if (state.warnings.length) {
@@ -2196,6 +2293,7 @@
       renderGrid(els.allGrid, repos, false);
       els.allEmpty.classList.toggle('hidden', repos.length > 0);
       renderRateNote();
+      renderLocalPanel();
       if (state.drawerRepo) renderDrawer(state.drawerRepo);
     }
 
@@ -2371,12 +2469,13 @@
             ${attentionGrid && repo.attention.reasons.length ? `<div class="reasons">${repo.attention.reasons.map((reason) => `<span class="reason ${reason.level}">${escapeHtml(reason.text)}</span>`).join('')}</div>` : ''}
             ${!attentionGrid && repo.topics.length ? `<div class="topics">${repo.topics.slice(0, 5).map((topic) => `<span class="topic">${escapeHtml(topic)}</span>`).join('')}</div>` : ''}
           </div>
+          <div data-local-view="${escapeAttr(repo.fullName)}">${renderLocalRepo(repo.fullName)}</div>
           <nav class="actions" aria-label="${escapeAttr(repo.fullName)} links">
             <a href="${escapeAttr(repo.url)}" target="_blank" rel="noreferrer" title="Open repository">${icon('repo')}<span>Repo</span></a>
             <a href="${escapeAttr(repo.url)}/issues" target="_blank" rel="noreferrer" title="Open issues">${icon('issue')}<span>Issues</span></a>
             <a href="${escapeAttr(repo.url)}/pulls" target="_blank" rel="noreferrer" title="Open pull requests">${icon('pr')}<span>PRs</span></a>
             <a href="${escapeAttr(repo.workflow.url || `${repo.url}/actions`)}" target="_blank" rel="noreferrer" title="${escapeAttr(repo.workflow.url ? 'Open latest workflow run' : 'Open Actions')}">${icon('play')}<span>Actions</span></a>
-            <button type="button" data-copy="${escapeAttr(repo.httpsUrl)}" title="Copy HTTPS clone URL">${icon('copy')}<span>Clone</span></button>
+            <button type="button" data-copy="${escapeAttr(repo.httpsUrl)}" title="Copy HTTPS clone URL">${icon('copy')}<span>URL</span></button>
           </nav>
         </article>
       `;
@@ -2463,6 +2562,7 @@
       `;
 
       const sections = [];
+      sections.push(`<div class="drawer-section"><h4>On this Mac</h4><div data-local-view="${escapeAttr(repo.fullName)}" data-local-detail="true">${renderLocalRepo(repo.fullName, true)}</div></div>`);
 
       if (repo.attention.reasons.length) {
         sections.push(`
@@ -2617,15 +2717,232 @@
       els.connectionStatus.title = bits.join(' · ');
     }
 
-    async function checkServer() {
+    function localManagerReady() {
+      return state.server.online && state.server.localRepos;
+    }
+
+    function canUpdateLocal(repo) {
+      return Boolean(repo?.installed && !repo.dirty && !repo.ahead && ['ready', 'behind'].includes(repo.state));
+    }
+
+    function renderLocalPanel() {
+      const available = localManagerReady();
+      const busy = state.local.scanning || state.local.bulk || state.local.pending.size > 0;
+      const known = state.repos.map((repo) => state.local.repos.get(repo.fullName)).filter(Boolean);
+      const installed = known.filter((repo) => repo.installed);
+      const eligible = installed.filter(canUpdateLocal);
+      els.localConnection.textContent = !state.server.checked ? 'Checking local manager…'
+        : !available ? 'Local manager offline' : !state.local.gitAvailable && state.local.scanned ? 'Git needs setup'
+        : state.server.platform === 'darwin' ? 'Connected to this Mac' : 'Local manager connected';
+      els.localConnection.className = `badge ${available ? 'ok' : 'warn'}`;
+      els.localRoot.textContent = state.local.root || 'Available when the local manager connects';
+      els.localInstalled.textContent = state.local.scanned ? String(installed.length) : '—';
+      els.localReady.textContent = state.local.scanned ? String(eligible.length) : '—';
+      els.localScan.disabled = !available || busy;
+      els.localScan.innerHTML = `${icon('search')}${state.local.scanning ? 'Scanning…' : 'Scan local status'}`;
+      els.localUpdateAll.disabled = !available || !state.local.gitAvailable || busy || !eligible.length;
+      els.localUpdateAll.innerHTML = `${icon('refresh')}${state.local.bulk ? 'Updating installed…' : 'Update installed'}${eligible.length && !state.local.bulk ? ` (${eligible.length})` : ''}`;
+      els.localReconnect.classList.toggle('hidden', available || !state.server.checked);
+      els.localReconnect.disabled = busy;
+      els.forgetButton.disabled = busy;
+      els.localLauncher.classList.toggle('hidden', available || !state.server.checked);
+      els.localHint.textContent = !available ? 'Start the local manager to enable cloning, updating, Finder, and Terminal.'
+        : !state.local.gitAvailable && state.local.scanned ? 'Git is unavailable. Open Terminal, run xcode-select --install, then scan again.'
+        : !state.repos.length ? 'Connect GitHub below to load repositories, then choose Clone to Mac on a card.'
+        : !state.local.scanned ? 'Scanning your repository folder…'
+        : `${installed.length} installed of ${state.repos.length} loaded repositories. ${installed.length - eligible.length} need attention before an automatic update. Scan uses the last fetched Git information; Check & update contacts GitHub.`;
+      els.localScan.setAttribute('aria-busy', state.local.scanning ? 'true' : 'false');
+      els.localUpdateAll.setAttribute('aria-busy', state.local.bulk ? 'true' : 'false');
+    }
+
+    function renderLocalRepo(fullName, detail = false) {
+      const repo = state.local.repos.get(fullName);
+      const available = localManagerReady();
+      const pending = state.local.pending.has(fullName);
+      const busy = pending || state.local.bulk || state.local.scanning;
+      const canAct = available && state.local.gitAvailable && !busy;
+      const labels = { 'not-installed': 'Not downloaded', ready: 'Installed · clean', dirty: 'Local changes', behind: 'Updates available',
+        ahead: 'Local commits', diverged: 'Histories diverged', blocked: 'Needs attention' };
+      const label = !available ? 'Local manager offline' : pending ? 'Working…' : !repo ? 'Not scanned' : labels[repo.state] || 'Needs attention';
+      const tone = pending ? 'info' : repo?.state === 'ready' ? 'ok' : repo?.state === 'behind' ? 'info'
+        : repo && !['ready', 'not-installed'].includes(repo.state) ? 'warn' : '';
+      const action = repo?.installed ? 'update' : 'clone';
+      const allowed = action === 'update' ? canUpdateLocal(repo) : repo?.state === 'not-installed';
+      const actionLabel = pending ? 'Working…' : action === 'update' ? 'Check & update' : 'Clone to Mac';
+      const button = (actionName, text, enabled, primary = false) => `<button type="button" ${primary ? 'class="primary"' : ''} data-local-action="${actionName}" data-local-repo="${escapeAttr(fullName)}" ${enabled ? '' : 'disabled'} aria-label="${escapeAttr(`${text}: ${fullName}`)}">${text}</button>`;
+      const canOpen = available && state.server.platform === 'darwin' && repo?.installed && repo.state !== 'blocked' && !busy;
+      return `<div class="local-repo">
+        <div class="local-state-row"><span class="badge ${tone}">${escapeHtml(label)}</span>
+          ${repo?.branch ? `<span>${escapeHtml(repo.branch)}</span>` : ''}
+          ${repo?.ahead ? `<span>${Number(repo.ahead)} ahead</span>` : ''}${repo?.behind ? `<span>${Number(repo.behind)} behind</span>` : ''}
+        </div>
+        ${detail && repo?.path ? `<code class="local-path">${escapeHtml(repo.path)}</code>` : ''}
+        ${repo?.message && (detail || !allowed && repo.state !== 'not-installed') ? `<p class="local-note">${escapeHtml(repo.message)}</p>` : ''}
+        <div class="local-buttons">
+          ${button(action, actionLabel, canAct && allowed, action === 'clone')}
+          ${repo?.installed ? `${button('open', 'Finder', canOpen)}${button('terminal', 'Terminal', canOpen)}` : ''}
+        </div>
+        ${detail ? '<p class="local-note" style="margin:10px 0 0">Cloning downloads source code. See the project README for setup and running instructions.</p>' : ''}
+      </div>`;
+    }
+
+    function renderLocalViews() {
+      renderLocalPanel();
+      document.querySelectorAll('[data-local-view]').forEach((view) => {
+        view.innerHTML = renderLocalRepo(view.dataset.localView, view.dataset.localDetail === 'true');
+      });
+      if (state.repos.length) renderChips(baseFiltered());
+    }
+
+    function localResult(fullName, message, success = true) {
+      const item = document.createElement('li');
+      item.className = success ? 'success' : 'error';
+      item.textContent = `${fullName ? `${fullName}: ` : ''}${message}`;
+      els.localResults.appendChild(item);
+      while (els.localResults.children.length > 100) els.localResults.firstElementChild.remove();
+      els.localResults.scrollTop = els.localResults.scrollHeight;
+    }
+
+    async function localRequest(endpoint, payload) {
+      if (!localManagerReady()) throw new Error('Start Repo Dashboard from Applications, then reconnect.');
+      let response;
       try {
+        response = await fetch(endpoint, {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json', 'X-Repo-Dashboard-Token': state.server.csrfToken },
+          body: JSON.stringify(payload)
+        });
+      } catch (error) {
+        state.server.online = false;
+        throw new Error('Connection to the local manager was lost. Reopen Repo Dashboard, reconnect, and scan status before retrying.');
+      }
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 403 && body.code === 'SESSION_EXPIRED') {
+        state.server.localRepos = false;
+        throw new Error('The local session expired. Reconnect before trying again.');
+      }
+      if (!response.ok) throw new Error(body.error || `The local manager returned an error (${response.status}).`);
+      return body;
+    }
+
+    async function readLocalStatus(fullNames) {
+      const found = [];
+      // Keep scans bounded even for accounts with hundreds of repositories.
+      const batches = fullNames.length ? Array.from({ length: Math.ceil(fullNames.length / 100) }, (_, i) => fullNames.slice(i * 100, (i + 1) * 100)) : [[]];
+      for (const repos of batches) {
+        const body = await localRequest('/api/local/status', { repos });
+        state.local.root = body.root || '';
+        state.local.gitAvailable = Boolean(body.gitAvailable);
+        for (const repo of body.repos || []) {
+          state.local.repos.set(repo.fullName, repo);
+          found.push(repo);
+        }
+      }
+      state.local.scanned = true;
+      return found;
+    }
+
+    async function scanLocalRepos({ quiet = false } = {}) {
+      if (!localManagerReady() || state.local.scanning || state.local.bulk || state.local.pending.size) return;
+      state.local.scanning = true;
+      if (!quiet) els.localProgress.textContent = 'Scanning local checkouts…';
+      renderLocalViews();
+      try {
+        const names = state.repos.map((repo) => repo.fullName);
+        await readLocalStatus(names);
+        if (!quiet) els.localProgress.textContent = `Scan complete. ${names.length} repositories checked on this computer.`;
+      } catch (error) {
+        els.localProgress.textContent = error.message;
+      } finally {
+        state.local.scanning = false;
+        renderLocalViews();
+        if (state.quick === 'installed') render();
+      }
+    }
+
+    async function runLocalAction(fullName, action, { bulk = false } = {}) {
+      if (!state.repos.some((repo) => repo.fullName === fullName) || !['clone', 'update', 'open', 'terminal'].includes(action)) return false;
+      if (!localManagerReady() || state.local.pending.has(fullName) || state.local.scanning || state.local.bulk && !bulk) return false;
+      const local = state.local.repos.get(fullName);
+      if (action === 'clone' && local?.state !== 'not-installed' || action === 'update' && !canUpdateLocal(local)) return false;
+      state.local.pending.add(fullName);
+      if (!bulk) els.localProgress.textContent = `${action === 'clone' ? 'Cloning' : action === 'update' ? 'Checking and updating' : 'Opening'} ${fullName}… Keep this window open until the result appears.`;
+      renderLocalViews();
+      let success = false;
+      try {
+        const body = await localRequest('/api/local/action', { fullName, action });
+        if (body.repo) state.local.repos.set(fullName, body.repo);
+        localResult(fullName, body.message || 'Done.');
+        success = true;
+      } catch (error) {
+        localResult(fullName, error.message, false);
+      } finally {
+        if (localManagerReady() && ['clone', 'update'].includes(action)) {
+          try { await readLocalStatus([fullName]); }
+          catch (error) { localResult(fullName, `Could not refresh local status: ${error.message}`, false); }
+        }
+        state.local.pending.delete(fullName);
+        if (!bulk) els.localProgress.textContent = success ? 'Done. See the result below.' : 'Action could not finish. See the result below.';
+        renderLocalViews();
+        if (!bulk && state.quick === 'installed') render();
+      }
+      return success;
+    }
+
+    async function updateInstalledRepos() {
+      if (!localManagerReady() || state.local.bulk || state.local.scanning || state.local.pending.size) return;
+      state.local.bulk = true;
+      els.localResults.replaceChildren();
+      els.localProgress.textContent = 'Checking which installed repositories are safe to update…';
+      renderLocalViews();
+      let completed = 0;
+      let failed = 0;
+      let skipped = 0;
+      try {
+        const names = state.repos.map((repo) => repo.fullName);
+        const statuses = await readLocalStatus(names);
+        const installed = statuses.filter((repo) => repo.installed);
+        const eligible = installed.filter(canUpdateLocal);
+        for (const repo of installed.filter((item) => !canUpdateLocal(item))) {
+          skipped++;
+          localResult(repo.fullName, `Skipped — ${repo.message || 'local changes or branch history need attention'}.`, false);
+        }
+        for (let i = 0; i < eligible.length; i++) {
+          els.localProgress.textContent = `Checking & updating ${i + 1} of ${eligible.length}: ${eligible[i].fullName}. Keep this window open.`;
+          if (await runLocalAction(eligible[i].fullName, 'update', { bulk: true })) completed++;
+          else failed++;
+          if (!localManagerReady()) {
+            skipped += eligible.length - i - 1;
+            break;
+          }
+        }
+        els.localProgress.textContent = `Finished: ${completed} checked successfully, ${failed} failed, ${skipped} skipped. No repositories were automatically cloned.`;
+      } catch (error) {
+        els.localProgress.textContent = error.message;
+        localResult('', error.message, false);
+      } finally {
+        state.local.bulk = false;
+        renderLocalViews();
+      }
+    }
+
+    async function checkServer() {
+      if (state.local.bulk || state.local.pending.size || state.local.scanning) return;
+      els.localReconnect.disabled = true;
+      try {
+        if (!['http:', 'https:'].includes(location.protocol)) throw new Error('Launch the local manager first.');
         const response = await fetch('/api/health', { cache: 'no-store' });
         const body = await response.json();
-        state.server = { checked: true, online: Boolean(body.ok), openai: Boolean(body.openai), model: body.model || '' };
+        if (!response.ok || !body.ok || body.app !== 'repo-dashboard') throw new Error('Local manager unavailable.');
+        state.server = { checked: true, online: true, openai: Boolean(body.openai), model: body.model || '',
+          localRepos: Boolean(body.localRepos && body.csrfToken), csrfToken: body.csrfToken || '', platform: body.platform || '' };
       } catch (error) {
-        state.server = { checked: true, online: false, openai: false, model: '' };
+        state.server = { checked: true, online: false, openai: false, model: '', localRepos: false, csrfToken: '', platform: '' };
       }
+      els.localReconnect.disabled = false;
       renderChatMode();
+      renderLocalViews();
+      if (state.server.localRepos) await scanLocalRepos({ quiet: true });
     }
 
     function renderChatMode() {
@@ -2762,11 +3079,16 @@
     }
 
     function forgetToken() {
+      if (state.local.bulk || state.local.scanning || state.local.pending.size) return;
       localStorage.removeItem(STORAGE_TOKEN);
       sessionStorage.removeItem(STORAGE_TOKEN);
       localStorage.removeItem(STORAGE_CACHE);
       state.token = '';
       state.repos = [];
+      state.local.repos.clear();
+      state.local.scanned = false;
+      els.localProgress.textContent = '';
+      els.localResults.replaceChildren();
       state.owners = [];
       state.languages = [];
       state.viewer = null;
@@ -2779,6 +3101,7 @@
       closeDrawer();
       clearInterval(autoRefreshTimer);
       showTokenPanel();
+      renderLocalViews();
       showToast('Token and cached data removed');
     }
 
