@@ -6,7 +6,7 @@ The dashboard is a macOS launcher for a browser interface backed by a local Node
 
 ## Install on macOS
 
-1. Install **Node.js 20 or newer** from [nodejs.org](https://nodejs.org/) (choose LTS).
+1. Install **Node.js 24 LTS** from [nodejs.org](https://nodejs.org/en/download). The dashboard itself supports Node 20+, but individual repositories can require newer versions.
 2. Make sure Git works. If needed, open Terminal, run `xcode-select --install`, and finish installing Apple's Command Line Tools.
 3. Clone this repository or download and extract its ZIP from GitHub.
 4. Double-click **`install-macos.command`** in the extracted project folder. The installer creates **`~/Applications/Repo Dashboard.app`** and opens it.
@@ -40,7 +40,9 @@ Choose **Details** to inspect a repository without installing or updating it. Th
 | **Scan local status** | Refreshes local checkout status. |
 | **Finder / Terminal** | Opens the installed repository's folder on your Mac. |
 
-For Node.js apps, setup selects the project's package manager from its declaration or lockfile and uses its `dev` script when available, otherwise `start`. When a project has `start` and `build` but no `dev` script, installation also runs its build. The selected package manager must already be installed; modern Yarn projects need a committed `yarn.lock`. Setup does not install global runtimes or configure API keys, databases, environment files, or other external services. Static sites run through a local server. Unsupported projects keep their downloaded code and show a manual-setup message instead of being marked ready to launch.
+For Node.js apps, setup selects the project's package manager from its declaration or lockfile and uses its `dev` script when available, otherwise `start`. When a project has `start` and `build` but no `dev` script, installation also runs its build. Standalone Electron packaging commands are skipped: running an Electron app from source does not need an installer package, and a Windows packaging target must not run during Mac setup. Compilation followed by packaging is still treated as a build. The selected package manager must already be installed; modern Yarn projects need a committed `yarn.lock`. Setup does not install global runtimes or configure API keys, databases, environment files, or other external services.
+
+Static sites run through a local server. A build-free site can also have a `package.json` used only for tests, linting, or formatting; those development dependencies are not installed for its browser launcher. Projects needing compilation, runtime packages, or custom setup still require a supported launch script. Unsupported projects keep their downloaded code and show a manual-setup message instead of being marked ready to launch.
 
 Project setup records and install logs live in `~/Library/Application Support/Repo Dashboard Projects/OWNER/`, outside both your checkouts and the dashboard runtime. Reinstalling the dashboard preserves these records and the project launchers.
 
@@ -49,6 +51,19 @@ Updates stop when there are local changes, a conflicting destination, an unexpec
 For private repositories, configure **Git's own credentials** before cloning. If you use [GitHub CLI](https://cli.github.com/), run `gh auth login`, then `gh auth setup-git` in Terminal. Existing Git credential helpers also work. The browser's GitHub token is used for repository information and read-only chat; local clone/update actions use Git credentials and do not receive that browser token. Interactive Git credential prompts are disabled for dashboard operations, so resolve sign-in problems in Terminal first.
 
 To update the dashboard itself, download or pull the latest project and run `install-macos.command` again. The installer stages a replacement, waits for the launched service to stop safely, and preserves the previous installation if replacement fails. If a Git operation is still finishing, wait and rerun the installer. Your checkouts remain separate and are not removed.
+
+### If an installation fails
+
+The result identifies the failed stage and, when recognized, its cause: for example a Node version requirement, a dependency conflict, a lockfile mismatch, a network problem, disk space, or folder permissions. The dashboard does not delete lockfiles, disable certificate checks, or force incompatible dependency versions to make a retry pass.
+
+For dependency failures, open the displayed `REPO.install.log`. Git command failures also write a `REPO.git.log` when the diagnostic folder is writable. In Finder, choose **Go → Go to Folder** and paste `~/Library/Application Support/Repo Dashboard Projects/OWNER/`, replacing `OWNER` with your GitHub name. Open the relevant log in TextEdit. Logs remain on your Mac with private file permissions and common credential formats redacted; inspect them for other sensitive output before sharing an excerpt.
+
+Include the final error lines when reporting an issue. A failed build is recorded separately from dependency installation, and the log includes the dashboard's Node version and processor. For comparison, these read-only Terminal commands show the versions in your current shell:
+
+```sh
+node --version
+npm --version
+```
 
 ## Features
 

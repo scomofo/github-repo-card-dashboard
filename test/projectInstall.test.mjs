@@ -7,7 +7,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createProjectInstaller } from '../src/projectInstall.mjs';
+import { createProjectInstaller, inspectProject } from '../src/projectInstall.mjs';
 import { loopbackUrl, serveStaticProject } from '../scripts/project-launcher.mjs';
 
 const exec = promisify(execFile);
@@ -67,6 +67,38 @@ test('locked npm projects use ci without rewriting the lock; start-only projects
   await exec('bash', [result.launcherPath], { env: f.env });
 });
 
+test('Electron source apps install and launch without running a Windows packaging build', async (t) => {
+  const manifest = { name: 'sparksuite-fixture', version: '1.0.0', private: true,
+    scripts: { start: 'electron .', build: 'electron-builder --win', 'build:mac': 'electron-builder --mac' },
+    devDependencies: { electron: 'file:./fake-electron', 'electron-builder': 'file:./fake-builder' } };
+  const f = await fixture(t, manifest);
+  for (const [folder, name, marker] of [
+    ['fake-electron', 'electron', 'electron-started'],
+    ['fake-builder', 'electron-builder', 'packaging-ran'],
+  ]) {
+    await mkdir(path.join(f.directory, folder));
+    await writeFile(path.join(f.directory, folder, 'package.json'), JSON.stringify({ name, version: '1.0.0', bin: { [name]: 'cli.cjs' } }));
+    await writeFile(path.join(f.directory, folder, 'cli.cjs'), `#!${process.execPath}\nrequire('node:fs').writeFileSync(require('node:path').join(process.env.APP_TEST_ROOT, ${JSON.stringify(marker)}), 'yes');\n`);
+  }
+  const result = await f.install();
+  assert.equal(result.ready, true);
+  await assert.rejects(readFile(path.join(f.temp, 'packaging-ran')), { code: 'ENOENT' });
+  await exec('bash', [result.launcherPath], { env: f.env });
+  assert.equal(await readFile(path.join(f.temp, 'electron-started'), 'utf8'), 'yes');
+  await f.writeManifest({ ...manifest, scripts: { ...manifest.scripts, build: 'vite build && electron-builder --win' } });
+  assert.equal((await inspectProject(f.input)).needsBuild, true, 'source compilation before packaging remains required');
+  await f.writeManifest({ ...manifest, scripts: { ...manifest.scripts, build: 'electron-builder --win && node finish.cjs' } });
+  assert.equal((await inspectProject(f.input)).needsBuild, true, 'compound commands are not treated as packaging-only');
+  for (const name of ['prebuild', 'postbuild']) {
+    await f.writeManifest({ ...manifest, main: 'dist/main.js', scripts: { ...manifest.scripts, [name]: 'tsc' } });
+    assert.equal((await inspectProject(f.input)).needsBuild, true, `${name} compilation remains required before launch`);
+  }
+  await f.writeManifest({ ...manifest, scripts: { ...manifest.scripts, prebuild: ' ', postbuild: '' } });
+  assert.equal((await inspectProject(f.input)).needsBuild, false, 'empty lifecycle hooks do not add a build requirement');
+  await f.writeManifest({ ...manifest, devDependencies: {} });
+  assert.equal((await inspectProject(f.input)).needsBuild, true, 'the exception requires an actual Electron dependency');
+});
+
 test('a failed repair invalidates prior readiness and returns no subprocess secrets', async (t) => {
   const f = await fixture(t, { name: 'local-app', version: '1.0.0', scripts: { start: 'node app.cjs', postinstall: 'node setup.cjs' } });
   await writeFile(path.join(f.directory, 'setup.cjs'), "if (require('node:fs').existsSync(require('node:path').join(process.env.APP_TEST_ROOT, 'fail'))) { console.error('private-test-token'); process.exit(3); }");
@@ -80,6 +112,25 @@ test('a failed repair invalidates prior readiness and returns no subprocess secr
   });
   assert.equal((await f.describe()).ready, false);
   await assert.rejects(f.installer.launch(f.input), { statusCode: 409 });
+});
+
+test('build failures retain successful install output and report the build stage', async (t) => {
+  const f = await fixture(t, { name: 'build-failure', private: true, scripts: {
+    start: 'node app.cjs', postinstall: 'node setup.cjs', build: 'node build.cjs'
+  } });
+  await writeFile(path.join(f.directory, 'setup.cjs'), "console.log('dependencies-installed-marker');");
+  await writeFile(path.join(f.directory, 'build.cjs'), "console.error('build-failed-marker GITHUB_TOKEN=synthetic-value'); process.exit(2);");
+  await assert.rejects(f.install(), (error) => {
+    assert.match(error.message, /Project build failed \(BUILD_FAILED\)/);
+    assert.doesNotMatch(error.message, /synthetic-value|build-failed-marker/);
+    return true;
+  });
+  const log = await readFile(path.join(f.stateRoot, 'owner/demo.install.log'), 'utf8');
+  assert.match(log, /dependencies-installed-marker/);
+  assert.match(log, /Stage: build/);
+  assert.match(log, /build-failed-marker/);
+  assert.doesNotMatch(log, /synthetic-value/);
+  assert.equal((await f.describe()).ready, false);
 });
 
 test('manifest changes and removed dependencies require a fresh install', async (t) => {
@@ -109,6 +160,62 @@ test('unsupported and ambiguous projects never claim an installed app', async (t
   assert.equal((await f.describe()).manager, 'pnpm');
   await f.writeManifest({ packageManager: 'something@1.0.0', scripts: { start: 'node app.js' } });
   assert.equal((await f.install()).ready, false);
+});
+
+test('build-free HTML with a tests-only package installs without its development dependencies', async (t) => {
+  const manifest = { name: 'impact-sim-fixture', type: 'module', private: true,
+    scripts: { test: 'node --test tests/*.test.js', check: 'node --check js/app.js' },
+    devDependencies: { jsdom: '30.0.1' }, engines: { node: '>=999' } };
+  const f = await fixture(t, manifest, { env: { PATH: '/no-package-manager', REPO_DASHBOARD_NO_OPEN: '1' } });
+  const html = '<!DOCTYPE html><h1>Native browser app</h1><script type="module" src="js/app.js"></script>';
+  await writeFile(path.join(f.directory, 'index.html'), html);
+  await mkdir(path.join(f.directory, 'js'));
+  await writeFile(path.join(f.directory, 'js/app.js'), 'document.body.dataset.loaded = "yes";');
+  const lock = JSON.stringify({ name: manifest.name, lockfileVersion: 3, packages: {} });
+  await writeFile(path.join(f.directory, 'package-lock.json'), lock);
+  const result = await f.install();
+  assert.equal(result.kind, 'static');
+  assert.equal(result.ready, true);
+  assert.ok((await stat(result.launcherPath)).mode & 0o100);
+  await assert.rejects(stat(path.join(f.directory, 'node_modules')), { code: 'ENOENT' });
+  await assert.rejects(stat(path.join(f.stateRoot, 'owner/demo.install.log')), { code: 'ENOENT' });
+  assert.equal(await readFile(path.join(f.directory, 'package-lock.json'), 'utf8'), lock);
+  const { server, url } = await serveStaticProject(f.directory, { open: () => {} });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  assert.equal(await (await fetch(url)).text(), html);
+  assert.match(await (await fetch(`${url}js/app.js`)).text(), /dataset.loaded/);
+  await f.writeManifest({ ...manifest, scripts: { ...manifest.scripts, build: 'bundler build' } });
+  assert.equal((await f.describe()).ready, false, 'adding a build requirement invalidates the static launcher');
+});
+
+test('HTML fallback refuses build/lifecycle scripts, runtime dependencies, workspaces, and transpiled entry points', async (t) => {
+  const f = await fixture(t);
+  const indexPath = path.join(f.directory, 'index.html');
+  await writeFile(indexPath, '<h1>Source entry</h1>');
+  for (const manifest of [
+    { scripts: { build: 'vite build' } },
+    { scripts: { 'build:css': 'sass src public' } },
+    { scripts: { prepare: 'generate-app' } },
+    { scripts: { install: 'generate-app' } },
+    { scripts: { postinstall: 'generate-app' } },
+    { dependencies: { react: '^19.0.0' } },
+    { optionalDependencies: { helper: '^1.0.0' } },
+    { peerDependencies: { react: '^19.0.0' } },
+    { workspaces: ['packages/*'] },
+  ]) {
+    await f.writeManifest(manifest);
+    assert.equal((await f.describe()).supported, false, JSON.stringify(manifest));
+  }
+  await f.writeManifest({ scripts: { test: 'node --test' } });
+  for (const html of [
+    '<script type="module" src="src/main.tsx"></script>',
+    '<script type="module" src=src/main.ts></script>',
+    '<link href="src/styles.scss?raw">',
+    '<script src="node_modules/react/index.js"></script>',
+  ]) {
+    await writeFile(indexPath, html);
+    assert.equal((await f.describe()).supported, false, html);
+  }
 });
 
 test('missing package manager gives a retryable setup error without installing a global tool', async (t) => {
