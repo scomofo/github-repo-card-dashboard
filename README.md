@@ -1,8 +1,8 @@
 # GitHub Repo Card Dashboard
 
-A local macOS repository dashboard: double-click **Repo Dashboard.app**, then clone and safely update your GitHub repositories from their cards. Repository activity, failing CI, reviews, and issues stay together in the same view.
+A local macOS repository dashboard: double-click a repository card to install it on your Mac, including supported project dependencies and a launcher. Double-click an installed card to update its code and dependencies. Repository activity, failing CI, reviews, and issues stay together in the same view.
 
-The app is a macOS launcher for a browser interface backed by a local Node.js server. Node.js and Git are prerequisites; they are not bundled. Cloning downloads repository source code. It does not install each project's dependencies, execute its scripts, or turn arbitrary repositories into macOS applications.
+The dashboard is a macOS launcher for a browser interface backed by a local Node.js server. Node.js and Git are prerequisites; they are not bundled. Automatic project setup supports Node.js apps with a root `package.json` and a `dev` or `start` script, plus static sites with a root `index.html`. Other repositories are downloaded locally with guidance for manual setup.
 
 ## Install on macOS
 
@@ -22,19 +22,29 @@ bash "/path/to/github-repo-card-dashboard/install-macos.command"
 
 The installer signs its generated app locally for bundle integrity; it does not provide a Developer ID signature or notarization. Downloaded scripts and the generated app may trigger macOS security prompts. If your Mac's software policy blocks them, use your organization's approved software process.
 
-## Clone and update repositories
+## Install, update, and run your repositories
 
-Connect GitHub in the dashboard to load your repository cards, then use:
+1. Connect GitHub in the dashboard to load your repository cards.
+2. **Double-click a repository card** to download its code and install its dependencies. Installation runs that project's package-manager lifecycle scripts, so use it for repositories you trust.
+3. When setup finishes, choose **Launch app**. The dashboard creates a reusable launcher at **`~/Applications/Repo Apps/OWNER/REPO.command`**; you can also double-click that file in Finder later.
+4. Double-click a clean, ready card again when you want to fetch updates and refresh its dependencies. If the checkout has local changes or unpublished commits, double-click launches the existing app instead. Restart a running project to use updated code.
+
+Choose **Details** to inspect a repository without installing or updating it. The card controls also expose these actions directly:
 
 | Control | What it does |
 | --- | --- |
-| **Clone to Mac** | Downloads the repository into `~/Developer/GitHub/OWNER/REPO`. |
-| **Check & update** | Fetches from GitHub and fast-forwards a clean checkout on its matching upstream branch. |
+| **Install locally** | Downloads the repository into `~/Developer/GitHub/OWNER/REPO`, sets up supported dependencies, and creates its launcher. Existing source downloads are set up in place. |
+| **Update app** | Fetches from GitHub, fast-forwards an eligible checkout on its matching upstream branch, and refreshes project setup. |
+| **Launch app** | Starts the installed project's launch command in Terminal. |
 | **Update installed** | Updates eligible repositories in sequence and reports the result for each. |
 | **Scan local status** | Refreshes local checkout status. |
 | **Finder / Terminal** | Opens the installed repository's folder on your Mac. |
 
-Updates stop when there are local changes, a conflicting destination, an unexpected origin, a detached branch, or a missing/mismatched upstream. The dashboard never force-pulls, resets, stashes, deletes a checkout, or installs project dependencies. Status counts describe the repositories currently loaded into the dashboard. An update fetches before checking whether remote commits are available; a scan alone does not fetch every repository.
+For Node.js apps, setup selects the project's package manager from its declaration or lockfile and uses its `dev` script when available, otherwise `start`. When a project has `start` and `build` but no `dev` script, installation also runs its build. The selected package manager must already be installed; modern Yarn projects need a committed `yarn.lock`. Setup does not install global runtimes or configure API keys, databases, environment files, or other external services. Static sites run through a local server. Unsupported projects keep their downloaded code and show a manual-setup message instead of being marked ready to launch.
+
+Project setup records and install logs live in `~/Library/Application Support/Repo Dashboard Projects/OWNER/`, outside both your checkouts and the dashboard runtime. Reinstalling the dashboard preserves these records and the project launchers.
+
+Updates stop when there are local changes, a conflicting destination, an unexpected origin, a detached branch, or a missing/mismatched upstream. The dashboard never force-pulls, resets, stashes, or deletes a checkout. Project install scripts can create or change files; those changes may need attention before the next update. If dependency setup fails after a successful Git update, the fetched code remains in place and setup can be retried. Status counts describe the repositories currently loaded into the dashboard. An update fetches before checking whether remote commits are available; a scan alone does not fetch every repository.
 
 For private repositories, configure **Git's own credentials** before cloning. If you use [GitHub CLI](https://cli.github.com/), run `gh auth login`, then `gh auth setup-git` in Terminal. Existing Git credential helpers also work. The browser's GitHub token is used for repository information and read-only chat; local clone/update actions use Git credentials and do not receive that browser token. Interactive Git credential prompts are disabled for dashboard operations, so resolve sign-in problems in Terminal first.
 
@@ -54,7 +64,7 @@ To update the dashboard itself, download or pull the latest project and run `ins
 - Quick links to the repo, issues, PRs, latest workflow run, and a one-click HTTPS clone URL copy.
 
 **Detail drawer**
-- Click any card for a slide-over with stats (stars, forks, watchers, size, created), the latest workflow run, the most recently updated open PRs with review decision, open issues, latest commit and release, a language breakdown, topics, links (including Pulse, Releases and homepage) and HTTPS / SSH / `gh` clone commands.
+- Choose a card’s **Details** button for a slide-over with stats (stars, forks, watchers, size, created), the latest workflow run, the most recently updated open PRs with review decision, open issues, latest commit and release, a language breakdown, topics, links (including Pulse, Releases and homepage) and HTTPS / SSH / `gh` clone commands.
 
 **Overview and insights**
 - Summary tiles for repos, attention, failing CI, PRs awaiting review, open issues, commits (30d), stale repos and stars. Click a tile to filter.
@@ -85,7 +95,7 @@ Use a launcher so the local command server starts with the dashboard:
 - macOS without installing an app: double-click `launch-dashboard.command`, or run `bash launch-dashboard.command`.
 - Any platform with Node.js: run `npm start`, then open [the local dashboard](http://127.0.0.1:8787).
 
-You can still open `index.html` directly for repository cards, but local clone/update controls and chat require the local server. Finder and Terminal shortcuts require macOS.
+You can still open `index.html` directly for repository cards, but local install/update/launch controls and chat require the local server. Finder and Terminal shortcuts require macOS.
 
 The macOS launcher keeps the server running when you close the browser. To stop it:
 
@@ -139,7 +149,7 @@ npm test
 
 This is a personal local tool. If you choose to remember the token, it is stored in this browser's `localStorage`; otherwise it is kept in `sessionStorage` and forgotten when the tab closes.
 
-Do not publish a copy of this app with your token inside it. Use `Forget token` to clear the token from your browser. The OpenAI API key is read by the local server from your environment and is not stored by the app. No OpenAI key is needed for launching, cloning, updating, or built-in read-only chat commands.
+Do not publish a copy of this app with your token inside it. Use `Forget token` to clear the token from your browser. The OpenAI API key is read by the local server from your environment and is not stored by the app. No OpenAI key is needed for the dashboard's local install/update/launch controls or built-in read-only chat commands; individual projects may have their own requirements.
 
 The server binds to `127.0.0.1`. Local repository routes require the dashboard's same-origin session protection. The local manager rejects unexpected repository origins and paths that escape the configured root. Do not expose the local server through a public proxy or share a browser profile containing your token.
 
@@ -147,7 +157,8 @@ The server binds to `127.0.0.1`. Local repository routes require the dashboard's
 
 - No hosted backend or OAuth flow; GitHub dashboard access uses a personal access token.
 - No bundled Node.js or Git, Developer ID signature, or notarized installer.
-- Repository installation means cloning source; running each project remains a separate step.
+- Automatic app setup covers root-level Node.js `dev`/`start` projects and static `index.html` sites. Monorepo-specific setup, other languages, native app packaging, and external services may require manual steps.
+- Dependency installation and project launch execute repository code on your Mac. A successful install means setup completed and a launcher was created; the project may still require its own configuration to run.
 - No team sharing.
 - Chat commands are read-only.
 - GitHub API rate limits still apply. Each refresh costs roughly one GraphQL point per five repos plus one REST call per non-archived repo for Actions status.

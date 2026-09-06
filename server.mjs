@@ -49,7 +49,7 @@ export function createDashboardServer({ localManager = createLocalRepoManager() 
 
       if (request.method === 'GET' && request.url === '/api/health') {
         sendJson(response, 200, {
-          ok: true, app: 'repo-dashboard', localRepos: true, csrfToken,
+          ok: true, app: 'repo-dashboard', localRepos: true, projectInstall: true, csrfToken,
           platform: process.platform, pid: process.pid, runtime: root,
           openai: Boolean(openaiApiKey), model: openaiApiKey ? openaiModel : ''
         });

@@ -917,7 +917,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 5px;
+      gap: 4px;
       min-height: 36px;
       border: 0;
       border-right: 1px solid var(--border);
@@ -925,9 +925,9 @@
       background: transparent;
       color: var(--muted);
       text-decoration: none;
-      font-size: 12px;
+      font-size: 11.5px;
       font-weight: 500;
-      padding: 0 6px;
+      padding: 0 4px;
       box-shadow: none;
     }
 
@@ -1370,14 +1370,14 @@
       <div class="local-heading">
         <div>
           <h2 id="localTitle">On this Mac</h2>
-          <p>Your GitHub projects, ready to work on. Clone a repo once, then check for updates here.</p>
+          <p>Double-click a repository card to install its app locally. Double-click an installed app to update it.</p>
         </div>
         <span id="localConnection" class="badge">Checking local manager…</span>
       </div>
       <div class="local-metrics">
         <div class="local-metric"><span>Repository folder</span><code id="localRoot">Available when the local manager connects</code></div>
-        <div class="local-metric"><span>Installed from your repo list</span><strong id="localInstalled">—</strong></div>
-        <div class="local-metric"><span>Ready to check &amp; update</span><strong id="localReady">—</strong></div>
+        <div class="local-metric"><span>Downloaded repositories</span><strong id="localInstalled">—</strong></div>
+        <div class="local-metric"><span>Apps ready to launch</span><strong id="localReady">—</strong></div>
       </div>
       <div class="local-toolbar">
         <button id="localScan" type="button" disabled><svg class="icon"><use href="#i-search"/></svg>Scan local status</button>
@@ -1387,15 +1387,18 @@
       <p id="localHint" class="local-note">Connect GitHub below to load your repositories.</p>
       <div id="localLauncher" class="local-launcher hidden">
         Double-click <strong>install-macos.command</strong> in the downloaded dashboard folder once. Then open
-        <strong>Repo Dashboard</strong> from your Applications folder whenever you want to clone or update repositories.
+        <strong>Repo Dashboard</strong> from your Applications folder whenever you want to install or update repository apps.
         You can also double-click <strong>launch-dashboard.command</strong> in the project folder.
         Opening <code>index.html</code> directly only shows the GitHub overview; local actions need the launcher.
       </div>
       <details class="local-help">
-        <summary>How cloning and updates work</summary>
-        <p><strong>Clone to Mac</strong> downloads a repository's source code. Follow that project's README to install dependencies or run its app.</p>
+        <summary>How local app installation works</summary>
+        <p><strong>Install locally</strong> downloads the source, installs dependencies, and creates a double-clickable launcher in <code>~/Applications/Repo Apps</code>.
+          Automatic setup supports Node projects with a <code>dev</code> or <code>start</code> script and plain HTML sites. Other projects are downloaded with a message explaining that manual setup is needed.</p>
+        <p>Installing or updating runs the project's package scripts on your Mac. Choose repositories you trust.
+          Use <strong>Launch app</strong> to run an installed app. For details and source-only actions, choose <strong>Details</strong>.</p>
         <p><strong>Scan local status</strong> checks files on your Mac using the last fetched Git information.
-          <strong>Update installed</strong> contacts GitHub and updates clean, eligible checkouts one at a time across your full loaded repo list.
+          <strong>Update installed</strong> contacts GitHub and updates clean, eligible checkouts one at a time across your full loaded repo list, refreshing dependencies and launchers for supported apps.
           Local edits, local commits, and conflicting histories are left for you to resolve in Terminal. Each result appears below.</p>
         <p>Your browser token reads GitHub data. Private clones and updates use your Mac's existing Git credentials;
           if needed, sign in with <code>gh auth login</code> and run <code>gh auth setup-git</code> in Terminal.</p>
@@ -1408,13 +1411,13 @@
         <img src="./favicon.png" alt="">
         <div>
           <h2>Connect your GitHub repos</h2>
-          <p style="margin:0">See your GitHub projects, clone them to this Mac, and safely keep their source code up to date.</p>
+          <p style="margin:0">See your GitHub projects, install supported apps on this Mac, and keep them up to date.</p>
         </div>
       </div>
       <div class="steps">
         <div class="step"><span class="num">1</span><b>Create a token</b>Use a fine-grained personal access token with read-only access.</div>
         <div class="step"><span class="num">2</span><b>Grant read scopes</b>Metadata, Contents, Issues, Pull requests and Actions let every card fill in.</div>
-        <div class="step"><span class="num">3</span><b>Choose a repo to clone</b>Connect below, then use Clone to Mac on any repository card.</div>
+        <div class="step"><span class="num">3</span><b>Install an app</b>Connect below, then double-click a card or choose Install locally. Installation runs the project's package scripts.</div>
       </div>
       <form id="tokenForm" class="token-form">
         <input id="tokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_... or ghp_..." aria-label="GitHub token">
@@ -1524,7 +1527,7 @@
           <div class="section-head">
             <div>
               <h2><span id="allTitle">All repos</span> <span id="allCountBadge" class="count">0</span></h2>
-              <p id="allSubtitle">Every accessible repository. Click a card for details.</p>
+              <p id="allSubtitle">Double-click a card to install or update its app. Choose Details to inspect a repository.</p>
             </div>
           </div>
           <div id="allGrid" class="grid"></div>
@@ -1624,7 +1627,7 @@
       updatedAt: null,
       fromCache: false,
       drawerRepo: null,
-      server: { checked: false, online: false, openai: false, model: '', localRepos: false, csrfToken: '', platform: '' },
+      server: { checked: false, online: false, openai: false, model: '', localRepos: false, projectInstall: false, csrfToken: '', platform: '' },
       local: { root: '', gitAvailable: false, repos: new Map(), scanning: false, scanned: false, pending: new Set(), bulk: false }
     };
 
@@ -1729,19 +1732,11 @@
         setQuick(state.quick === tile.dataset.quick ? 'all' : tile.dataset.quick);
       });
 
-      const handleCardActivation = (event) => {
-        const openButton = event.target.closest('[data-open]');
-        if (openButton) {
-          openDrawer(openButton.dataset.open);
-          return;
-        }
-        if (event.target.closest('a, button')) return;
-        const card = event.target.closest('.card[data-repo]');
-        if (card) openDrawer(card.dataset.repo);
-      };
       els.attentionGrid.addEventListener('click', handleCardActivation);
       els.allGrid.addEventListener('click', handleCardActivation);
       els.topStarred.addEventListener('click', handleCardActivation);
+      els.attentionGrid.addEventListener('dblclick', handleCardDoubleClick);
+      els.allGrid.addEventListener('dblclick', handleCardDoubleClick);
       document.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' && event.target.classList?.contains('card')) {
           openDrawer(event.target.dataset.repo);
@@ -1780,6 +1775,22 @@
         if (event.key === 'r' || event.key === 'R') refreshData();
         if (event.key === 'c' || event.key === 'C') setChatOpen(els.chatShell.classList.contains('hidden'));
       });
+    }
+
+    function handleCardActivation(event) {
+      const openButton = event.target.closest('[data-open]');
+      if (openButton) openDrawer(openButton.dataset.open);
+      // Background clicks leave the card in place so the second click can install.
+    }
+
+    function handleCardDoubleClick(event) {
+      if (event.target.closest('a, button, input, select, textarea, summary')) return false;
+      const card = event.target.closest('.card[data-repo]');
+      const repo = card && state.repos.find((item) => item.id === card.dataset.repo);
+      if (!repo) return false;
+      event.preventDefault();
+      const action = localPrimaryAction(state.local.repos.get(repo.fullName));
+      return action ? runLocalAction(repo.fullName, action) : false;
     }
 
     function loadSettings() {
@@ -2288,7 +2299,7 @@
       els.allTitle.textContent = state.quick === 'all' ? 'All repos' : quick.label;
       els.allCountBadge.textContent = repos.length;
       els.allSubtitle.textContent = state.quick === 'all'
-        ? `Every accessible repository, sorted by ${sortLabel()}. Click a card for details.`
+        ? `Sorted by ${sortLabel()}. Double-click to install or update an app; choose Details to inspect.`
         : `Repositories matching "${quick.label}", sorted by ${sortLabel()}.`;
       renderGrid(els.allGrid, repos, false);
       els.allEmpty.classList.toggle('hidden', repos.length > 0);
@@ -2471,11 +2482,11 @@
           </div>
           <div data-local-view="${escapeAttr(repo.fullName)}">${renderLocalRepo(repo.fullName)}</div>
           <nav class="actions" aria-label="${escapeAttr(repo.fullName)} links">
+            <button type="button" data-open="${escapeAttr(repo.id)}" title="Open repository details">${icon('eye')}<span>Details</span></button>
             <a href="${escapeAttr(repo.url)}" target="_blank" rel="noreferrer" title="Open repository">${icon('repo')}<span>Repo</span></a>
             <a href="${escapeAttr(repo.url)}/issues" target="_blank" rel="noreferrer" title="Open issues">${icon('issue')}<span>Issues</span></a>
             <a href="${escapeAttr(repo.url)}/pulls" target="_blank" rel="noreferrer" title="Open pull requests">${icon('pr')}<span>PRs</span></a>
             <a href="${escapeAttr(repo.workflow.url || `${repo.url}/actions`)}" target="_blank" rel="noreferrer" title="${escapeAttr(repo.workflow.url ? 'Open latest workflow run' : 'Open Actions')}">${icon('play')}<span>Actions</span></a>
-            <button type="button" data-copy="${escapeAttr(repo.httpsUrl)}" title="Copy HTTPS clone URL">${icon('copy')}<span>URL</span></button>
           </nav>
         </article>
       `;
@@ -2725,19 +2736,29 @@
       return Boolean(repo?.installed && !repo.dirty && !repo.ahead && ['ready', 'behind'].includes(repo.state));
     }
 
+    function canInstallLocal(repo) {
+      return Boolean(repo && (repo.state === 'not-installed' || repo.installed && repo.state !== 'blocked' && repo.project?.supported));
+    }
+
+    function localPrimaryAction(repo) {
+      if (repo?.project?.ready) return canUpdateLocal(repo) ? 'update-app' : 'launch';
+      return canInstallLocal(repo) ? 'install' : null;
+    }
+
     function renderLocalPanel() {
       const available = localManagerReady();
       const busy = state.local.scanning || state.local.bulk || state.local.pending.size > 0;
       const known = state.repos.map((repo) => state.local.repos.get(repo.fullName)).filter(Boolean);
       const installed = known.filter((repo) => repo.installed);
       const eligible = installed.filter(canUpdateLocal);
+      const apps = installed.filter((repo) => repo.project?.ready);
       els.localConnection.textContent = !state.server.checked ? 'Checking local manager…'
         : !available ? 'Local manager offline' : !state.local.gitAvailable && state.local.scanned ? 'Git needs setup'
         : state.server.platform === 'darwin' ? 'Connected to this Mac' : 'Local manager connected';
       els.localConnection.className = `badge ${available ? 'ok' : 'warn'}`;
       els.localRoot.textContent = state.local.root || 'Available when the local manager connects';
       els.localInstalled.textContent = state.local.scanned ? String(installed.length) : '—';
-      els.localReady.textContent = state.local.scanned ? String(eligible.length) : '—';
+      els.localReady.textContent = state.local.scanned ? String(apps.length) : '—';
       els.localScan.disabled = !available || busy;
       els.localScan.innerHTML = `${icon('search')}${state.local.scanning ? 'Scanning…' : 'Scan local status'}`;
       els.localUpdateAll.disabled = !available || !state.local.gitAvailable || busy || !eligible.length;
@@ -2746,11 +2767,12 @@
       els.localReconnect.disabled = busy;
       els.forgetButton.disabled = busy;
       els.localLauncher.classList.toggle('hidden', available || !state.server.checked);
-      els.localHint.textContent = !available ? 'Start the local manager to enable cloning, updating, Finder, and Terminal.'
+      els.localHint.textContent = !available ? 'Start the local manager to install, update, and launch apps on this Mac.'
+        : !state.server.projectInstall ? 'Restart or reinstall Repo Dashboard to enable app installation. Source-only actions remain available in Details.'
         : !state.local.gitAvailable && state.local.scanned ? 'Git is unavailable. Open Terminal, run xcode-select --install, then scan again.'
-        : !state.repos.length ? 'Connect GitHub below to load repositories, then choose Clone to Mac on a card.'
+        : !state.repos.length ? 'Connect GitHub below, then double-click a card to install a local app.'
         : !state.local.scanned ? 'Scanning your repository folder…'
-        : `${installed.length} installed of ${state.repos.length} loaded repositories. ${installed.length - eligible.length} need attention before an automatic update. Scan uses the last fetched Git information; Check & update contacts GitHub.`;
+        : `${apps.length} apps ready · ${installed.length} repositories downloaded. Double-click to install or update; local edits are preserved. Install and Update app run the project's package scripts.`;
       els.localScan.setAttribute('aria-busy', state.local.scanning ? 'true' : 'false');
       els.localUpdateAll.setAttribute('aria-busy', state.local.bulk ? 'true' : 'false');
     }
@@ -2761,28 +2783,36 @@
       const pending = state.local.pending.has(fullName);
       const busy = pending || state.local.bulk || state.local.scanning;
       const canAct = available && state.local.gitAvailable && !busy;
-      const labels = { 'not-installed': 'Not downloaded', ready: 'Installed · clean', dirty: 'Local changes', behind: 'Updates available',
+      const canManageApp = canAct && state.server.projectInstall;
+      const labels = { 'not-installed': 'Not downloaded', ready: repo?.project?.ready ? 'App ready · clean' : 'Source downloaded', dirty: 'Local changes', behind: 'Updates available',
         ahead: 'Local commits', diverged: 'Histories diverged', blocked: 'Needs attention' };
       const label = !available ? 'Local manager offline' : pending ? 'Working…' : !repo ? 'Not scanned' : labels[repo.state] || 'Needs attention';
-      const tone = pending ? 'info' : repo?.state === 'ready' ? 'ok' : repo?.state === 'behind' ? 'info'
+      const tone = pending ? 'info' : repo?.state === 'ready' && repo.project?.ready ? 'ok' : repo?.state === 'behind' ? 'info'
         : repo && !['ready', 'not-installed'].includes(repo.state) ? 'warn' : '';
-      const action = repo?.installed ? 'update' : 'clone';
-      const allowed = action === 'update' ? canUpdateLocal(repo) : repo?.state === 'not-installed';
-      const actionLabel = pending ? 'Working…' : action === 'update' ? 'Check & update' : 'Clone to Mac';
+      const action = localPrimaryAction(repo);
+      const allowed = Boolean(action);
+      const actionLabel = pending ? 'Working…' : action === 'update-app' ? 'Update app' : action === 'launch' ? 'Launch app' : 'Install locally';
       const button = (actionName, text, enabled, primary = false) => `<button type="button" ${primary ? 'class="primary"' : ''} data-local-action="${actionName}" data-local-repo="${escapeAttr(fullName)}" ${enabled ? '' : 'disabled'} aria-label="${escapeAttr(`${text}: ${fullName}`)}">${text}</button>`;
       const canOpen = available && state.server.platform === 'darwin' && repo?.installed && repo.state !== 'blocked' && !busy;
+      const canLaunch = canOpen && state.server.projectInstall && repo.project?.ready;
+      const appMessage = repo?.project?.message || (repo?.installed && !repo.project?.ready ? 'Source is downloaded. App setup has not completed.' : '');
       return `<div class="local-repo">
         <div class="local-state-row"><span class="badge ${tone}">${escapeHtml(label)}</span>
           ${repo?.branch ? `<span>${escapeHtml(repo.branch)}</span>` : ''}
           ${repo?.ahead ? `<span>${Number(repo.ahead)} ahead</span>` : ''}${repo?.behind ? `<span>${Number(repo.behind)} behind</span>` : ''}
         </div>
         ${detail && repo?.path ? `<code class="local-path">${escapeHtml(repo.path)}</code>` : ''}
+        ${detail && repo?.project?.launcherPath ? `<code class="local-path">${escapeHtml(repo.project.launcherPath)}</code>` : ''}
+        ${appMessage ? `<p class="local-note">${escapeHtml(appMessage)}</p>` : ''}
         ${repo?.message && (detail || !allowed && repo.state !== 'not-installed') ? `<p class="local-note">${escapeHtml(repo.message)}</p>` : ''}
         <div class="local-buttons">
-          ${button(action, actionLabel, canAct && allowed, action === 'clone')}
+          ${button(action || 'install', actionLabel, action === 'launch' ? canLaunch : canManageApp && allowed, true)}
+          ${repo?.project?.ready && action !== 'launch' ? button('launch', 'Launch app', canLaunch) : ''}
           ${repo?.installed ? `${button('open', 'Finder', canOpen)}${button('terminal', 'Terminal', canOpen)}` : ''}
+          ${detail ? button(repo?.installed ? 'update' : 'clone', repo?.installed ? 'Update source only' : 'Download source only', canAct && (repo?.installed ? canUpdateLocal(repo) : repo?.state === 'not-installed')) : ''}
         </div>
-        ${detail ? '<p class="local-note" style="margin:10px 0 0">Cloning downloads source code. See the project README for setup and running instructions.</p>' : ''}
+        ${repo?.project?.ready && !canUpdateLocal(repo) ? '<p class="local-note">Launch uses your current checkout. Resolve local changes or branch history before updating.</p>' : ''}
+        ${detail ? '<p class="local-note" style="margin:10px 0 0">Install and Update app run package scripts. Supported apps get a launcher in ~/Applications/Repo Apps. Source-only actions do not install dependencies.</p>' : ''}
       </div>`;
     }
 
@@ -2861,12 +2891,19 @@
     }
 
     async function runLocalAction(fullName, action, { bulk = false } = {}) {
-      if (!state.repos.some((repo) => repo.fullName === fullName) || !['clone', 'update', 'open', 'terminal'].includes(action)) return false;
+      if (!state.repos.some((repo) => repo.fullName === fullName) || !['clone', 'update', 'install', 'update-app', 'launch', 'open', 'terminal'].includes(action)) return false;
       if (!localManagerReady() || state.local.pending.has(fullName) || state.local.scanning || state.local.bulk && !bulk) return false;
+      if (['install', 'update-app', 'launch'].includes(action) && !state.server.projectInstall) {
+        els.localProgress.textContent = 'Restart or reinstall Repo Dashboard to enable app installation.';
+        return false;
+      }
       const local = state.local.repos.get(fullName);
-      if (action === 'clone' && local?.state !== 'not-installed' || action === 'update' && !canUpdateLocal(local)) return false;
+      if (action === 'clone' && local?.state !== 'not-installed' || ['update', 'update-app'].includes(action) && !canUpdateLocal(local)) return false;
+      if (action === 'install' && !canInstallLocal(local)) return false;
+      if (action === 'launch' && !(state.server.platform === 'darwin' && local?.installed && local.state !== 'blocked' && local.project?.ready)) return false;
       state.local.pending.add(fullName);
-      if (!bulk) els.localProgress.textContent = `${action === 'clone' ? 'Cloning' : action === 'update' ? 'Checking and updating' : 'Opening'} ${fullName}… Keep this window open until the result appears.`;
+      const actionVerb = { clone: 'Downloading source for', update: 'Updating source for', install: 'Installing app and dependencies for', 'update-app': 'Updating app and dependencies for', launch: 'Launching' }[action] || 'Opening';
+      if (!bulk) els.localProgress.textContent = `${actionVerb} ${fullName}… Keep this window open until the result appears.`;
       renderLocalViews();
       let success = false;
       try {
@@ -2877,7 +2914,7 @@
       } catch (error) {
         localResult(fullName, error.message, false);
       } finally {
-        if (localManagerReady() && ['clone', 'update'].includes(action)) {
+        if (localManagerReady() && ['clone', 'update', 'install', 'update-app'].includes(action)) {
           try { await readLocalStatus([fullName]); }
           catch (error) { localResult(fullName, `Could not refresh local status: ${error.message}`, false); }
         }
@@ -2909,7 +2946,8 @@
         }
         for (let i = 0; i < eligible.length; i++) {
           els.localProgress.textContent = `Checking & updating ${i + 1} of ${eligible.length}: ${eligible[i].fullName}. Keep this window open.`;
-          if (await runLocalAction(eligible[i].fullName, 'update', { bulk: true })) completed++;
+          const action = state.server.projectInstall && eligible[i].project?.supported ? 'update-app' : 'update';
+          if (await runLocalAction(eligible[i].fullName, action, { bulk: true })) completed++;
           else failed++;
           if (!localManagerReady()) {
             skipped += eligible.length - i - 1;
@@ -2935,9 +2973,9 @@
         const body = await response.json();
         if (!response.ok || !body.ok || body.app !== 'repo-dashboard') throw new Error('Local manager unavailable.');
         state.server = { checked: true, online: true, openai: Boolean(body.openai), model: body.model || '',
-          localRepos: Boolean(body.localRepos && body.csrfToken), csrfToken: body.csrfToken || '', platform: body.platform || '' };
+          localRepos: Boolean(body.localRepos && body.csrfToken), projectInstall: Boolean(body.projectInstall), csrfToken: body.csrfToken || '', platform: body.platform || '' };
       } catch (error) {
-        state.server = { checked: true, online: false, openai: false, model: '', localRepos: false, csrfToken: '', platform: '' };
+        state.server = { checked: true, online: false, openai: false, model: '', localRepos: false, projectInstall: false, csrfToken: '', platform: '' };
       }
       els.localReconnect.disabled = false;
       renderChatMode();
