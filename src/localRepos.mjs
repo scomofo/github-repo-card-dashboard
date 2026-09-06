@@ -4,6 +4,7 @@ import { lstat, mkdir, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { createProjectInstaller, ProjectInstallError } from './projectInstall.mjs';
+import { DEFAULT_DIAGNOSTICS_ROOT, writeDiagnosticLog } from './diagnostics.mjs';
 const ACTIONS = new Set(['clone', 'update', 'open', 'terminal', 'install', 'update-app', 'launch']);
 
 function execBounded(file, args, options) {
@@ -75,10 +76,13 @@ function execBounded(file, args, options) {
 }
 
 export class LocalRepoError extends Error {
-  constructor(message, statusCode = 409) {
-    super(message);
+  constructor(message, statusCode = 409, { cause, reasonCode, stage, exitCode } = {}) {
+    super(message, cause === undefined ? undefined : { cause });
     this.name = 'LocalRepoError';
     this.statusCode = statusCode;
+    if (reasonCode) this.reasonCode = reasonCode;
+    if (stage) this.stage = stage;
+    if (exitCode !== undefined) this.exitCode = exitCode;
   }
 }
 
@@ -123,22 +127,67 @@ async function existingDirectory(directory) {
   }
 }
 
-function safeFailure(error) {
+const FAILURE_STAGES = Object.freeze({
+  'git-version': 'checking Git',
+  'remote-url': 'checking the clone URL',
+  clone: 'downloading source',
+  fetch: 'fetching source updates',
+  merge: 'applying source updates',
+  status: 'inspecting local changes',
+  config: 'reading repository configuration',
+  origin: 'checking repository origin',
+  revision: 'inspecting repository history',
+  'local-files': 'accessing local repository files',
+  install: 'preparing app installation',
+  launch: 'opening the app launcher',
+});
+
+function gitStage(args) {
+  return ({ '--version': 'git-version', 'ls-remote': 'remote-url', clone: 'clone', fetch: 'fetch', merge: 'merge',
+    status: 'status', config: 'config', remote: 'origin', 'rev-parse': 'revision' })[args[0]] || 'local-files';
+}
+
+/** Classify untrusted subprocess diagnostics without exposing their content.
+ * Error.cause is intentionally nonenumerable: internal diagnostic logging can
+ * inspect it, but JSON serialization only includes the safe metadata below. */
+export function classifyLocalRepoFailure(error, { stage = 'local-files', gitProcess = false } = {}) {
   if (error instanceof LocalRepoError) return error;
-  if (error.code === 'ENOENT') return new LocalRepoError('Git is unavailable. Install the macOS Command Line Tools with xcode-select --install, then reopen the dashboard.', 503);
-  if (error.killed || error.code === 'ETIMEDOUT') return new LocalRepoError('The Git operation timed out. Check your connection and try again.', 504);
+  if (!Object.hasOwn(FAILURE_STAGES, stage)) stage = 'local-files';
+  const exitCode = Number.isInteger(error?.code) && error.code >= 0 && error.code <= 255 ? error.code : undefined;
+  const fail = (reasonCode, message, statusCode = 502) => new LocalRepoError(
+    `${message} (While ${FAILURE_STAGES[stage]}${exitCode === undefined ? '' : `; exit ${exitCode}`}.)`,
+    statusCode, { cause: error, reasonCode, stage, exitCode },
+  );
+  const diagnostic = typeof error?.stderr === 'string' ? error.stderr : '';
+  if (error?.code === 'ENOENT') return gitProcess
+    ? fail('git-unavailable', 'Git is unavailable. Install the macOS Command Line Tools with xcode-select --install, then reopen the dashboard.', 503)
+    : fail('file-missing', 'A required local file or folder is missing. Open the repository in Finder and retry installation.', 409);
+  if (['EACCES', 'EPERM'].includes(error?.code)) return fail('filesystem-permission', 'macOS denied access to a required file or folder. Check the repository and dashboard folders’ permissions, then retry.', 403);
+  if (error?.code === 'ENOSPC' || /no space left on device|disk quota exceeded/i.test(diagnostic)) return fail('disk-full', 'There is not enough writable disk space. Free space on the volume containing your repositories, then retry.', 507);
+  if (error?.code === 'EROFS' || /read-only file system/i.test(diagnostic)) return fail('filesystem-readonly', 'The repository location is on a read-only volume. Move it to a writable local folder before retrying.', 409);
+  if (error?.code === 'ELOOP' || /too many levels of symbolic links/i.test(diagnostic)) return fail('filesystem-symlink', 'A required local path contains an unsupported symbolic link or link loop. Inspect the repository and its Git metadata in Finder or Terminal.', 409);
+  if (error?.killed || error?.code === 'ETIMEDOUT') return fail('timeout', 'The operation timed out. Check your connection and retry; large repositories may need to be downloaded in Terminal.', 504);
+  if (error?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return fail('output-limit', 'Git produced more diagnostic output than the dashboard can capture. Open the repository in Terminal to inspect the operation.', 502);
   // Inspect diagnostics for classification only. Never return subprocess output, command lines,
   // or credential helper output: those can contain private URLs or credentials.
-  if (/authentication failed|could not read username|permission denied|repository not found|terminal prompts disabled/i.test(error.stderr || '')) {
-    return new LocalRepoError('Git could not access this repository. Sign in to Git using GitHub CLI (gh auth login, then gh auth setup-git) or your macOS Git credential helper, then retry. The dashboard token is used for GitHub data; local Git uses your Git credentials.', 403);
+  if (/could not resolve (?:host|proxy)|name or service not known|nodename nor servname provided/i.test(diagnostic)) return fail('network-dns', 'Git could not resolve GitHub or your proxy. Check your internet, VPN, proxy, and DNS settings, then retry.');
+  if (/SSL certificate problem|server certificate verification failed|certificate verify failed|unable to get local issuer certificate|SSL peer certificate|TLS certificate/i.test(diagnostic)) return fail('network-certificate', 'Git could not verify the network connection’s certificate. Check your system clock and trusted certificate or proxy settings, then retry. Keep certificate verification enabled.');
+  if (/redirect|requested URL returned error: 30[1278]/i.test(diagnostic)) return fail('network-redirect', 'GitHub or your network redirected the clone or update request. Check the repository URL and your VPN or proxy settings before retrying.');
+  if (/smudge filter .*failed|filter-process.*failed|external filter .*failed|git-lfs.*(?:not found|failed)|error downloading object/i.test(diagnostic)) return fail('git-filter', 'Git could not download or check out a file managed by Git LFS or another configured filter. Check Git LFS or filter setup in Terminal, then retry.');
+  if (/unable to create .*\.lock.*file exists|another git process seems to be running|cannot lock ref|index\.lock.*file exists/i.test(diagnostic)) return fail('git-lock', 'Git could not acquire a repository lock. Finish other Git operations, then retry. If none are running, inspect the lock in Terminal before removing it.', 409);
+  if (/unknown (?:option|switch)|unrecognized (?:option|argument)|unsupported (?:option|switch)/i.test(diagnostic)) return fail('git-version', 'Your Git version does not support an option required by the dashboard. Update Git or the macOS Command Line Tools, reopen the dashboard, and retry.', 503);
+  if (/(?:could not create|cannot create|unable to create|unable to open|cannot open|unable to access|cannot access|could not open|could not write|unable to write|cannot mkdir)[^\n]*(?:permission denied|operation not permitted)|insufficient permission for adding an object/i.test(diagnostic)) return fail('filesystem-permission', 'Git could not write or access required local files. Check repository folder permissions and macOS privacy permissions, then retry.', 403);
+  if (/authentication failed|could not read username|permission denied|repository not found|terminal prompts disabled|requested URL returned error: 40[13]/i.test(diagnostic)) {
+    return fail('git-auth', 'Git could not access this repository. Sign in to Git using GitHub CLI (gh auth login, then gh auth setup-git) or your macOS Git credential helper, then retry. The dashboard token is used for GitHub data; local Git uses your Git credentials.', 403);
   }
-  if (/would be overwritten by merge|untracked working tree files/i.test(error.stderr || '')) {
-    return new LocalRepoError('Incoming changes overlap local files, including ignored files. Your files were preserved. Move or commit them in Terminal before updating.');
+  if (/could not resolve|failed to connect|could not connect|connection (?:reset|refused|closed|timed out)|network is unreachable|RPC failed|early EOF|unexpected disconnect|HTTP\/2.*(?:error|closed)|TLS connection|SSL_ERROR_SYSCALL|requested URL returned error: 5\d\d|remote end hung up unexpectedly/i.test(diagnostic)) return fail('network-transport', 'The Git transfer failed or was interrupted. Check your internet, VPN, and proxy connection, then retry.');
+  if (/would be overwritten by merge|untracked working tree files/i.test(diagnostic)) {
+    return fail('local-overlap', 'Incoming changes overlap local files, including ignored files. Your files were preserved. Move or commit them in Terminal before updating.', 409);
   }
-  if (/not possible to fast-forward/i.test(error.stderr || '')) {
-    return new LocalRepoError('The branch cannot be fast-forwarded. Your local commits were preserved; resolve the history in Terminal.');
+  if (/not possible to fast-forward/i.test(diagnostic)) {
+    return fail('non-fast-forward', 'The branch cannot be fast-forwarded. Your local commits were preserved; resolve the history in Terminal.', 409);
   }
-  return new LocalRepoError('Git could not complete this operation. Check the repository in Terminal before trying again.', 502);
+  return fail('unknown', 'The operation could not be completed. Open the repository in Terminal to inspect it before retrying.');
 }
 
 /** Local Git operations only. remoteUrlForTests is an in-process integration-test seam,
@@ -150,6 +199,7 @@ export function createLocalRepoManager({
   platform = process.platform,
   remoteUrlForTests,
   projectInstaller = createProjectInstaller({ platform }),
+  diagnosticsRoot = DEFAULT_DIAGNOSTICS_ROOT,
 } = {}) {
   const repoRoot = path.resolve(root);
   const locks = new Set();
@@ -175,13 +225,18 @@ export function createLocalRepoManager({
       return result.stdout.trim();
     } catch (error) {
       if (allowedFailure && error.code === 1) return null;
-      throw safeFailure(error);
+      throw classifyLocalRepoFailure(error, { stage: gitStage(args), gitProcess: true });
     }
   }
 
   async function gitAvailable() {
     if (!gitCheck || Date.now() - gitCheck.at > 30_000) {
-      gitCheck = { at: Date.now(), value: await git(['--version']).then(() => true, () => false) };
+      try {
+        await git(['--version']);
+        gitCheck = { at: Date.now(), value: true };
+      } catch (error) {
+        gitCheck = { at: Date.now(), value: false, error };
+      }
     }
     return gitCheck.value;
   }
@@ -340,7 +395,11 @@ export function createLocalRepoManager({
   async function installProject(fullName) {
     const directory = await verifyRepository(fullName);
     const project = await projectInstaller.describe({ directory, fullName });
-    if (!project.supported) throw new ProjectInstallError(`Source downloaded. ${project.message || 'This project needs manual setup; open its README.'}`, 422);
+    if (!project.supported) {
+      const detail = (project.message || 'This project needs manual setup; open its README.')
+        .replace(/^Source (?:is )?downloaded(?:,\s*but|[.,])?\s*/i, '').replace(/^./, (first) => first.toUpperCase());
+      throw new ProjectInstallError(`Source downloaded. ${detail}`, 422);
+    }
     if (project.kind === 'node') await excludeGeneratedDependencies(directory);
     return projectInstaller.install({ directory, fullName });
   }
@@ -352,16 +411,19 @@ export function createLocalRepoManager({
     if (locks.has(key)) throw new LocalRepoError('An operation is already running for this repository. Wait for it to finish.');
     locks.add(key);
     cache.delete(key);
+    let stage = 'local-files';
     try {
-      if (!await gitAvailable()) throw new LocalRepoError('Git is unavailable. Install the macOS Command Line Tools with xcode-select --install, then reopen the dashboard.', 503);
+      if (!await gitAvailable()) throw gitCheck.error;
       const directory = repoPath(fullName);
       let message;
       if (action === 'install') {
         if (!await locationExists(fullName)) await cloneRepository(fullName);
+        stage = 'install';
         const project = await installProject(fullName);
         message = project.message || `Installed ${fullName}. Its app launcher is ready.`;
       } else if (action === 'update-app') {
         const updated = await updateRepository(fullName);
+        stage = 'install';
         try {
           const project = await installProject(fullName);
           message = `${updated} ${project.message || 'App dependencies and launcher are ready.'}`;
@@ -371,6 +433,7 @@ export function createLocalRepoManager({
         }
       } else if (action === 'launch') {
         await verifyRepository(fullName);
+        stage = 'launch';
         const result = await projectInstaller.launch({ directory, fullName });
         message = result.message || `Opened the launcher for ${fullName}.`;
       } else if (action === 'clone') {
@@ -388,7 +451,16 @@ export function createLocalRepoManager({
       cache.delete(key);
       return { message, repo: await inspect(fullName) };
     } catch (error) {
-      throw error instanceof LocalRepoError || error instanceof ProjectInstallError ? error : safeFailure(error);
+      const failure = error instanceof LocalRepoError || error instanceof ProjectInstallError ? error : classifyLocalRepoFailure(error, { stage });
+      if (failure instanceof LocalRepoError && failure.cause) {
+        // Keep detailed diagnostics on this computer. The HTTP response gets
+        // the fixed classification and log path, never raw Git/helper output.
+        const content = `Repository: ${fullName}\nAction: ${action}\nStage: ${failure.stage}\nReason: ${failure.reasonCode}\nExit: ${failure.exitCode ?? 'unavailable'}\nNode: ${process.version}\nPlatform: ${process.platform} ${process.arch}\n\n${failure.cause.stderr || failure.cause.message || 'No additional diagnostics.'}\n`;
+        const logPath = await writeDiagnosticLog({ root: diagnosticsRoot, fullName, kind: 'git', content }).catch(() => null);
+        throw new LocalRepoError(`${failure.message} ${logPath ? `Details: ${logPath}` : 'The diagnostic log could not be written; check folder permissions and disk space.'}`,
+          failure.statusCode, { cause: failure.cause, stage: failure.stage, reasonCode: failure.reasonCode, exitCode: failure.exitCode });
+      }
+      throw failure;
     } finally {
       cache.delete(key);
       locks.delete(key);

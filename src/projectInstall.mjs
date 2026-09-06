@@ -5,6 +5,7 @@ import { access, chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'no
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { classifyPackageFailure, writeDiagnosticLog } from './diagnostics.mjs';
 
 const LOCKS = { npm: ['npm-shrinkwrap.json', 'package-lock.json'], pnpm: ['pnpm-lock.yaml'], yarn: ['yarn.lock'], bun: ['bun.lock', 'bun.lockb'] };
 const INPUTS = ['package.json', ...Object.values(LOCKS).flat(), '.npmrc', '.yarnrc', '.yarnrc.yml', 'pnpm-workspace.yaml', 'bunfig.toml'];
@@ -42,6 +43,35 @@ async function contents(file) {
 async function exists(file) { return Boolean(await lstat(file).catch(() => null)); }
 function shellQuote(value) { return `'${value.replaceAll("'", "'\\''")}'`; }
 
+async function isStaticManifest(directory, manifest) {
+  // Some browser apps use package.json only for tests. Do not require npm to
+  // install those tools to launch already runnable HTML (for example impact-sim).
+  // Keep build/framework projects out of this fallback: a source index.html is
+  // not proof that a bundled or transpiled app can run in a static server.
+  if (manifest.workspaces || ['dependencies', 'optionalDependencies', 'peerDependencies']
+    .some((field) => Object.keys(manifest[field] || {}).length)) return false;
+  if (Object.keys(manifest.scripts || {}).some((name) => !/^(?:pre|post)?(?:test|check|lint|format)(?::[a-z\d:_-]+)?$/i.test(name))) return false;
+  const html = await contents(path.join(directory, 'index.html'));
+  if (!html) return false;
+  for (const match of html.toString('utf8').matchAll(/\b(?:src|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
+    const target = (match[1] ?? match[2] ?? match[3]).split(/[?#]/, 1)[0];
+    if (/\.(?:[cm]?tsx?|jsx|vue|svelte|scss|sass|less)$/i.test(target) || /(?:^|\/)node_modules\//i.test(target)) return false;
+  }
+  return true;
+}
+
+function isElectronPackagingBuild(manifest) {
+  const usesElectron = ['dependencies', 'devDependencies', 'optionalDependencies']
+    .some((field) => typeof manifest[field]?.electron === 'string');
+  // npm run build also runs these hooks. They may compile the app or create
+  // required assets even when the build command itself only packages Electron.
+  if (['prebuild', 'postbuild'].some((name) => typeof manifest.scripts?.[name] === 'string'
+    && manifest.scripts[name].trim())) return false;
+  // Packaging an Electron app is optional when its start script runs source.
+  // Match only a standalone packaging command; retain compile/build pipelines.
+  return usesElectron && /^(?:electron-builder|electron-packager)(?:[ \t]+[a-z\d_./:=@-]+)*[ \t]*$/i.test(manifest.scripts.build.trim());
+}
+
 /** Read-only project detection. No repository-supplied commands run here. */
 export async function inspectProject(input) {
   const { directory } = identity(input);
@@ -60,7 +90,11 @@ export async function inspectProject(input) {
   const modules = await lstat(path.join(directory, 'node_modules')).catch((error) => { if (error.code === 'ENOENT') return null; throw error; });
   if (modules && (!modules.isDirectory() || modules.isSymbolicLink())) return unsupported('node_modules is a symlink or is not a directory. Move it aside in Terminal before installing this app.');
   const script = ['dev', 'start'].find((name) => typeof manifest.scripts?.[name] === 'string' && manifest.scripts[name].trim());
-  if (!script) return unsupported('Source is downloaded, but package.json has no dev or start script. Follow the README to run this project.');
+  if (!script) {
+    if (await isStaticManifest(directory, manifest)) return { kind: 'static', supported: true, ready: false, fingerprint,
+      message: 'Install a local browser launcher for this HTML app. Its package.json contains development checks only; no dependencies are needed to run it.' };
+    return unsupported('Source is downloaded, but package.json has no dev or start script and does not describe a build-free HTML app. Follow the README to run this project.');
+  }
   const detected = Object.keys(LOCKS).filter((manager) => LOCKS[manager].some((name) => files.get(name)));
   let manager;
   if (manifest.packageManager !== undefined) {
@@ -72,7 +106,7 @@ export async function inspectProject(input) {
   if (detected.length && !detected.includes(manager)) return unsupported(`package.json selects ${manager}, but the lockfile belongs to another package manager. Resolve this in Terminal before setup.`);
   const hasDependencies = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'].some((field) => Object.keys(manifest[field] || {}).length > 0) || Boolean(manifest.workspaces);
   return { kind: 'node', supported: true, ready: false, manager, script, fingerprint, hasDependencies,
-    needsBuild: script === 'start' && typeof manifest.scripts?.build === 'string' && Boolean(manifest.scripts.build.trim()),
+    needsBuild: script === 'start' && typeof manifest.scripts?.build === 'string' && Boolean(manifest.scripts.build.trim()) && !isElectronPackagingBuild(manifest),
     hasLock: LOCKS[manager].some((name) => files.get(name)),
     message: `Install dependencies with ${manager} and create a launcher for ${manager} run ${script}.` };
 }
@@ -223,20 +257,25 @@ export function createProjectInstaller({
           if (major >= 2 && !project.hasLock) throw new ProjectInstallError('Modern Yarn requires a committed yarn.lock for automatic setup. Run yarn install in Terminal, commit the lockfile, then try again.');
           args = major >= 2 ? ['install', '--immutable'] : ['install', project.hasLock ? '--frozen-lockfile' : '--no-lockfile', '--non-interactive', '--production=false'];
         }
+        let setupStage = 'install';
+        let log = `${project.manager} ${args.join(' ')}\nRepository: ${fullName}\nNode: ${process.version}\nPlatform: ${process.platform} ${process.arch}\n`;
         try {
           const result = await runBounded(managerPath, args, { cwd: directory, env: childEnv, timeoutMs });
-          let log = `${project.manager} ${args.join(' ')}\n${result.output}`;
-          await atomicWrite(logPath, log, 0o600);
+          log += result.output;
+          await writeDiagnosticLog({ root: stateRoot, fullName, kind: 'install', content: log });
           if (project.needsBuild) {
+            setupStage = 'build';
+            log += `\n${project.manager} run build\n`;
             const built = await runBounded(managerPath, ['run', 'build'], { cwd: directory, env: childEnv, timeoutMs });
-            log += `\n${project.manager} run build\n${built.output}`;
-            await atomicWrite(logPath, log, 0o600);
+            log += built.output;
+            await writeDiagnosticLog({ root: stateRoot, fullName, kind: 'install', content: log });
           }
         } catch (error) {
-          await atomicWrite(logPath, error.output || 'The package manager could not start.\n', 0o600);
-          if (error.code === 'ETIMEDOUT') throw new ProjectInstallError(`Dependency installation timed out. Your source remains local. Check ${logPath} and retry.`, 504);
-          if (error.code === 'OUTPUT_LIMIT') throw new ProjectInstallError(`Dependency installation produced too much output and was stopped. Check ${logPath}.`, 502);
-          throw new ProjectInstallError(`Dependency installation failed. Your source remains local. Check ${logPath}, resolve the reported setup problem, then choose Install locally again.`, 502);
+          const detail = classifyPackageFailure(error, { stage: setupStage });
+          log += `\nStage: ${setupStage}\nReason: ${detail.reason}\n${error.output || 'The command or diagnostic log write could not finish.\n'}`;
+          const written = await writeDiagnosticLog({ root: stateRoot, fullName, kind: 'install', content: log }).then(() => true, () => false);
+          const label = setupStage === 'build' ? 'Project build failed' : 'Dependency installation failed';
+          throw new ProjectInstallError(`${label} (${detail.reason}). ${detail.message} Your source remains local. ${written ? `Check ${logPath}` : 'The diagnostic log could not be written; check folder permissions and disk space'}, then choose Install locally again.`, detail.statusCode);
         }
         const after = await inspectProject({ directory, fullName });
         if (!after.supported || after.kind !== project.kind || after.fingerprint !== project.fingerprint) throw new ProjectInstallError('An installation script changed project setup files or created an invalid dependency folder. Review the changes in Terminal, then choose Install locally again.');

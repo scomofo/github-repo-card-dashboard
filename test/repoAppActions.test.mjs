@@ -38,7 +38,7 @@ async function fixture(t, { supported = true } = {}) {
   }
   await publish();
   const installer = createProjectInstaller({ stateRoot: path.join(temp, 'state'), launchersRoot: path.join(temp, 'launchers') });
-  const options = { root, cacheTtlMs: 0, remoteUrlForTests: () => remote, projectInstaller: installer };
+  const options = { root, cacheTtlMs: 0, remoteUrlForTests: () => remote, projectInstaller: installer, diagnosticsRoot: path.join(temp, 'diagnostics') };
   const manager = createLocalRepoManager(options);
   const directory = path.join(root, 'owner', 'local-app');
   const status = async () => (await manager.status([fullName])).repos[0];
