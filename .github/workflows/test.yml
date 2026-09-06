@@ -36,16 +36,22 @@ jobs:
           test -d "$HOME/Applications/Repo Dashboard.app"
           test -f "$HOME/Applications/Repo Dashboard.app/Contents/Resources/dashboard.icns"
           test -f "$HOME/Library/Application Support/Repo Dashboard/src/localRepos.mjs"
+          test -f "$HOME/Library/Application Support/Repo Dashboard/src/projectInstall.mjs"
+          test -f "$HOME/Library/Application Support/Repo Dashboard/scripts/project-launcher.mjs"
           test ! -e "$HOME/Library/Application Support/Repo Dashboard/.git"
           plutil -lint "$HOME/Applications/Repo Dashboard.app/Contents/Info.plist"
           codesign --verify --deep --strict "$HOME/Applications/Repo Dashboard.app"
+      - name: Install a local project and preserve its launcher across dashboard replacement
+        env:
+          REPO_DASHBOARD_NO_OPEN: '1'
+        run: node scripts/smoke-project-install.mjs "$HOME/Library/Application Support/Repo Dashboard" "$RUNNER_TEMP/checkout with spaces/install-macos.command"
       - name: Verify launch reuse, safe update, and shutdown
         env:
           REPO_DASHBOARD_NO_OPEN: '1'
         run: |
           launcher="$HOME/Library/Application Support/Repo Dashboard/launch-dashboard.command"
           "$launcher"
-          first_pid=$(node --input-type=module -e 'const h=await(await fetch("http://127.0.0.1:8787/api/health")).json(); if(h.app!=="repo-dashboard" || !h.localRepos) process.exit(1); console.log(h.pid)')
+          first_pid=$(node --input-type=module -e 'const h=await(await fetch("http://127.0.0.1:8787/api/health")).json(); if(h.app!=="repo-dashboard" || !h.localRepos || !h.projectInstall) process.exit(1); console.log(h.pid)')
           "$launcher" &
           "$launcher" &
           wait

@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
-import { lstat, mkdir, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, mkdir, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-const ACTIONS = new Set(['clone', 'update', 'open', 'terminal']);
+import { createProjectInstaller, ProjectInstallError } from './projectInstall.mjs';
+const ACTIONS = new Set(['clone', 'update', 'open', 'terminal', 'install', 'update-app', 'launch']);
 
 function execBounded(file, args, options) {
   return new Promise((resolve, reject) => {
@@ -147,6 +149,7 @@ export function createLocalRepoManager({
   timeoutMs = 120_000,
   platform = process.platform,
   remoteUrlForTests,
+  projectInstaller = createProjectInstaller({ platform }),
 } = {}) {
   const repoRoot = path.resolve(root);
   const locks = new Set();
@@ -217,11 +220,16 @@ export function createLocalRepoManager({
   }
 
   async function inspect(fullName) {
-    const base = { fullName, path: repoPath(fullName), installed: false, state: 'not-installed', branch: null, dirty: false, ahead: 0, behind: 0, message: 'Ready to install a local Git checkout.' };
+    const base = { fullName, path: repoPath(fullName), installed: false, state: 'not-installed', branch: null, dirty: false, ahead: 0, behind: 0, project: null, message: 'Source has not been downloaded to this computer.' };
     try {
       if (!await locationExists(fullName)) return base;
       base.installed = true;
       const directory = await verifyRepository(fullName);
+      try { base.project = await projectInstaller.describe({ directory, fullName }); }
+      catch (error) {
+        base.project = { kind: 'unsupported', supported: false, ready: false,
+          message: error instanceof ProjectInstallError ? error.message : 'Project setup could not be inspected. Check the project README.' };
+      }
       const output = await git(['status', '--porcelain=v2', '--branch', '--untracked-files=normal', '-z'], directory);
       const records = output.split('\0').filter(Boolean);
       const header = (name) => records.find((record) => record.startsWith(`# branch.${name} `))?.slice(name.length + 10);
@@ -278,9 +286,68 @@ export function createLocalRepoManager({
     return { root: repoRoot, gitAvailable: available, repos };
   }
 
+  async function cloneRepository(fullName) {
+    const directory = repoPath(fullName);
+    // Never reuse even an empty existing folder: it may contain the user’s work.
+    if (await locationExists(fullName)) throw new LocalRepoError('This folder already exists. Open it or move it aside before downloading.');
+    await mkdir(repoRoot, { recursive: true });
+    await existingDirectory(repoRoot);
+    await mkdir(path.dirname(directory), { recursive: true });
+    await existingDirectory(path.dirname(directory));
+    if (await locationExists(fullName)) throw new LocalRepoError('This folder already exists. Open it or move it aside before downloading.');
+    const remote = remoteUrlForTests ? remoteUrlForTests(fullName) : `https://github.com/${fullName}.git`;
+    const resolved = await git(['ls-remote', '--get-url', remote], repoRoot);
+    if (remoteUrlForTests ? resolved !== remote : githubName(resolved) !== fullName.toLowerCase()) {
+      throw new LocalRepoError('Your Git configuration rewrites this repository to a different host or repository. Correct the URL rewrite in Terminal before downloading.');
+    }
+    await git(['clone', '--no-recurse-submodules', '--origin', 'origin', '--template=', '--', remote, directory], repoRoot);
+    await verifyRepository(fullName);
+    return `Downloaded ${fullName}. Source-only download does not install app dependencies.`;
+  }
+
+  async function updateRepository(fullName) {
+    const directory = await verifyRepository(fullName);
+    const before = await inspect(fullName);
+    if (before.dirty || before.state === 'blocked' || before.state === 'diverged') throw new LocalRepoError(before.message);
+    const target = await upstream(directory, before.branch);
+    // Only the tracked origin branch is fetched. Preserve local work and ignore
+    // repository settings that would stash, squash or execute Git hooks.
+    await git(['fetch', '--no-tags', '--no-recurse-submodules', '--upload-pack=git-upload-pack', 'origin', `+${target.remoteRef}:${target.tracking}`], directory);
+    const afterFetch = await inspect(fullName);
+    if (afterFetch.dirty || afterFetch.state === 'blocked' || afterFetch.state === 'diverged' || afterFetch.branch !== before.branch) {
+      throw new LocalRepoError(afterFetch.branch !== before.branch ? 'The checked-out branch changed during the update. Retry after finishing your Terminal operation.' : afterFetch.message);
+    }
+    await git(['merge', '--ff-only', '--no-edit', '--no-autostash', '--no-squash', '--no-overwrite-ignore', target.tracking], directory);
+    return afterFetch.behind ? `Updated ${fullName} with a fast-forward. Your local work was preserved.` : `${fullName} is up to date with its tracked branch. Local commits were preserved.`;
+  }
+
+  async function excludeGeneratedDependencies(directory) {
+    // Keep generated dependencies out of Git status without editing .gitignore
+    // or hiding any tracked files. Refuse symlinked Git metadata destinations.
+    const info = path.join(directory, '.git', 'info');
+    if (!await existingDirectory(info)) await mkdir(info);
+    const handle = await open(path.join(info, 'exclude'), constants.O_RDWR | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW, 0o644);
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.size > 1024 * 1024) throw new LocalRepoError('Git’s local exclude file needs attention before installing dependencies.');
+      const current = await handle.readFile('utf8');
+      if (!current.split(/\r?\n/).includes('/node_modules/')) {
+        await handle.write('\n# Repo Dashboard generated dependencies\n/node_modules/\n');
+      }
+    } finally { await handle.close(); }
+  }
+
+  async function installProject(fullName) {
+    const directory = await verifyRepository(fullName);
+    const project = await projectInstaller.describe({ directory, fullName });
+    if (!project.supported) throw new ProjectInstallError(`Source downloaded. ${project.message || 'This project needs manual setup; open its README.'}`, 422);
+    if (project.kind === 'node') await excludeGeneratedDependencies(directory);
+    return projectInstaller.install({ directory, fullName });
+  }
+
   async function runAction({ fullName, action } = {}) {
     validateFullName(fullName);
-    if (!ACTIONS.has(action)) throw new LocalRepoError('Choose install, update, open folder, or open Terminal.', 400);
+    if (!ACTIONS.has(action)) throw new LocalRepoError('Choose install, update app, launch, download source, update source, Finder, or Terminal.', 400);
     const key = fullName.toLowerCase();
     if (locks.has(key)) throw new LocalRepoError('An operation is already running for this repository. Wait for it to finish.');
     locks.add(key);
@@ -289,49 +356,39 @@ export function createLocalRepoManager({
       if (!await gitAvailable()) throw new LocalRepoError('Git is unavailable. Install the macOS Command Line Tools with xcode-select --install, then reopen the dashboard.', 503);
       const directory = repoPath(fullName);
       let message;
-      if (action === 'clone') {
-        // Never reuse even an empty existing folder: it may contain the user’s work.
-        if (await locationExists(fullName)) throw new LocalRepoError('This folder already exists. Open it or move it aside before installing.');
-        await mkdir(repoRoot, { recursive: true });
-        await existingDirectory(repoRoot);
-        await mkdir(path.dirname(directory), { recursive: true });
-        await existingDirectory(path.dirname(directory));
-        if (await locationExists(fullName)) throw new LocalRepoError('This folder already exists. Open it or move it aside before installing.');
-        const remote = remoteUrlForTests ? remoteUrlForTests(fullName) : `https://github.com/${fullName}.git`;
-        const resolved = await git(['ls-remote', '--get-url', remote], repoRoot);
-        if (remoteUrlForTests ? resolved !== remote : githubName(resolved) !== fullName.toLowerCase()) {
-          throw new LocalRepoError('Your Git configuration rewrites this repository to a different host or repository. Correct the URL rewrite in Terminal before installing.');
+      if (action === 'install') {
+        if (!await locationExists(fullName)) await cloneRepository(fullName);
+        const project = await installProject(fullName);
+        message = project.message || `Installed ${fullName}. Its app launcher is ready.`;
+      } else if (action === 'update-app') {
+        const updated = await updateRepository(fullName);
+        try {
+          const project = await installProject(fullName);
+          message = `${updated} ${project.message || 'App dependencies and launcher are ready.'}`;
+        } catch (error) {
+          if (error instanceof ProjectInstallError) error.message = `Source update completed. App setup did not finish: ${error.message}`;
+          throw error;
         }
-        await git(['clone', '--no-recurse-submodules', '--origin', 'origin', '--template=', '--', remote, directory], repoRoot);
+      } else if (action === 'launch') {
         await verifyRepository(fullName);
-        message = `Installed ${fullName}. Your Git checkout is ready; project dependencies are not installed automatically.`;
+        const result = await projectInstaller.launch({ directory, fullName });
+        message = result.message || `Opened the launcher for ${fullName}.`;
+      } else if (action === 'clone') {
+        message = await cloneRepository(fullName);
+      } else if (action === 'update') {
+        message = await updateRepository(fullName);
       } else {
         await verifyRepository(fullName);
-        if (action === 'update') {
-          const before = await inspect(fullName);
-          if (before.dirty || before.state === 'blocked' || before.state === 'diverged') throw new LocalRepoError(before.message);
-          const target = await upstream(directory, before.branch);
-          // Explicit refspec ignores dangerous/misconfigured fetch mappings and avoids touching
-          // other branches. No tags, submodules, hooks, reset, stash, push, or branch switches.
-          await git(['fetch', '--no-tags', '--no-recurse-submodules', '--upload-pack=git-upload-pack', 'origin', `+${target.remoteRef}:${target.tracking}`], directory);
-          const afterFetch = await inspect(fullName);
-          if (afterFetch.dirty || afterFetch.state === 'blocked' || afterFetch.state === 'diverged' || afterFetch.branch !== before.branch) {
-            throw new LocalRepoError(afterFetch.branch !== before.branch ? 'The checked-out branch changed during the update. Retry after finishing your Terminal operation.' : afterFetch.message);
-          }
-          await git(['merge', '--ff-only', '--no-edit', '--no-autostash', '--no-squash', '--no-overwrite-ignore', target.tracking], directory);
-          message = afterFetch.behind ? `Updated ${fullName} with a fast-forward. Your local work was preserved.` : `${fullName} is up to date with its tracked branch. Local commits were preserved.`;
-        } else {
-          if (platform !== 'darwin') throw new LocalRepoError('Opening Finder or Terminal is available when this dashboard runs on your Mac.', 400);
-          const args = action === 'terminal' ? ['-a', 'Terminal', directory] : [directory];
-          try { await execBounded('/usr/bin/open', args, { timeout: 10_000, maxBuffer: 64 * 1024, env }); }
-          catch { throw new LocalRepoError('macOS could not open this folder. Open the displayed repository path manually.', 502); }
-          message = action === 'terminal' ? `Opened ${fullName} in Terminal.` : `Opened ${fullName} in Finder.`;
-        }
+        if (platform !== 'darwin') throw new LocalRepoError('Opening Finder or Terminal is available when this dashboard runs on your Mac.', 400);
+        const args = action === 'terminal' ? ['-a', 'Terminal', directory] : [directory];
+        try { await execBounded('/usr/bin/open', args, { timeout: 10_000, maxBuffer: 64 * 1024, env }); }
+        catch { throw new LocalRepoError('macOS could not open this folder. Open the displayed repository path manually.', 502); }
+        message = action === 'terminal' ? `Opened ${fullName} in Terminal.` : `Opened ${fullName} in Finder.`;
       }
       cache.delete(key);
       return { message, repo: await inspect(fullName) };
     } catch (error) {
-      throw error instanceof LocalRepoError ? error : safeFailure(error);
+      throw error instanceof LocalRepoError || error instanceof ProjectInstallError ? error : safeFailure(error);
     } finally {
       cache.delete(key);
       locks.delete(key);

@@ -13,6 +13,7 @@ class Element {
     this.dataset = {};
     this.disabled = false;
     this.innerHTML = '';
+    this.listeners = new Map();
     const classes = new Set();
     this.classList = {
       add: (...names) => names.forEach((name) => classes.add(name)),
@@ -25,6 +26,10 @@ class Element {
         return enabled;
       }
     };
+  }
+  addEventListener(name, listener) {
+    if (!this.listeners.has(name)) this.listeners.set(name, []);
+    this.listeners.get(name).push(listener);
   }
   setAttribute(name, value) { this.attributes[name] = value; }
   appendChild(child) { child.parent = this; this.children.push(child); }
@@ -55,22 +60,23 @@ function harness(fetch, { protocol = 'http:' } = {}) {
       return elements.get(id);
     },
     querySelectorAll: () => [],
-    createElement: () => new Element()
+    createElement: () => new Element(),
+    addEventListener() {}
   };
   const context = vm.createContext({
     document, fetch, location: { protocol },
-    window: { matchMedia: () => ({ matches: false }) },
+    window: { matchMedia: () => ({ matches: false, addEventListener() {} }) },
     console, setTimeout, clearTimeout, setInterval, clearInterval
   });
-  vm.runInContext(`${script}\nglobalThis.dashboardTest = { state, els, runLocalAction, updateInstalledRepos, checkServer, renderLocalRepo, renderLocalPanel, readLocalStatus };`, context);
+  vm.runInContext(`${script}\nglobalThis.dashboardTest = { state, els, bindEvents, handleCardActivation, handleCardDoubleClick, localPrimaryAction, runLocalAction, updateInstalledRepos, checkServer, renderLocalRepo, renderLocalPanel, readLocalStatus };`, context);
   const api = context.dashboardTest;
-  api.state.server = { checked: true, online: true, localRepos: true, csrfToken: 'local-session-secret', platform: 'darwin', openai: false, model: '' };
+  api.state.server = { checked: true, online: true, localRepos: true, projectInstall: true, csrfToken: 'local-session-secret', platform: 'darwin', openai: false, model: '' };
   api.state.local.gitAvailable = true;
   api.state.local.scanned = true;
   api.state.token = 'github-browser-token-must-not-be-sent';
   api.setRepos = (statuses) => {
     api.state.repos = statuses.map((local) => ({
-      fullName: local.fullName, owner: local.fullName.split('/')[0],
+      id: local.fullName, fullName: local.fullName, owner: local.fullName.split('/')[0],
       attention: { score: 0 }, workflow: { status: 'none' }, topics: []
     }));
     statuses.forEach((local) => api.state.local.repos.set(local.fullName, local));
@@ -109,6 +115,155 @@ test('a repeated clone request executes once and keeps the browser token out of 
     assert.equal(request.body.githubToken, undefined);
     assert.ok(!request.options.body.includes(api.state.token));
   }
+});
+
+function cardEvent(fullName, { interactive = false } = {}) {
+  const card = { dataset: { repo: fullName } };
+  return {
+    target: { closest: (selector) => selector === '.card[data-repo]' ? card : interactive && selector.startsWith('a,') ? {} : null },
+    preventDefault() {}
+  };
+}
+
+test('double-click installs once across duplicate cards, while background clicks leave details closed', async () => {
+  const actions = [];
+  let finishInstall;
+  const ready = checkout('scott/music', 'ready', {
+    project: { kind: 'node', supported: true, ready: true, manager: 'npm', script: 'dev', launcherPath: '/Users/scott/Applications/Repo Apps/scott/music.command' }
+  });
+  const api = harness(async (url, options) => {
+    const body = JSON.parse(options.body);
+    if (url.endsWith('/status')) return response({ root: '/Users/scott/Repos', gitAvailable: true, repos: [ready] });
+    actions.push(body);
+    return await new Promise((resolve) => { finishInstall = resolve; });
+  });
+  api.setRepos([checkout('scott/music', 'not-installed')]);
+  api.bindEvents();
+  const event = cardEvent('scott/music');
+  for (const grid of [api.els.attentionGrid, api.els.allGrid]) {
+    assert.equal(grid.listeners.get('dblclick').length, 1);
+    grid.listeners.get('click')[0](event);
+  }
+  assert.equal(api.state.drawerRepo, null);
+  const first = api.els.attentionGrid.listeners.get('dblclick')[0](event);
+  assert.equal(await api.els.allGrid.listeners.get('dblclick')[0](event), false);
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].action, 'install');
+  assert.equal(api.state.drawerRepo, null);
+  finishInstall(response({ message: 'App installed. Launcher created.', repo: ready }));
+  assert.equal(await first, true);
+  assert.match(api.renderLocalRepo('scott/music'), /App ready/);
+  assert.match(api.renderLocalRepo('scott/music'), /data-local-action="launch"/);
+  assert.equal(api.localPrimaryAction(ready), 'update-app');
+  assert.equal(api.handleCardDoubleClick(cardEvent('scott/music', { interactive: true })), false);
+  assert.equal(actions.length, 1);
+});
+
+test('double-click updates a ready app and refreshes its dependency installation', async () => {
+  const actions = [];
+  const ready = checkout('scott/music', 'behind', { project: { kind: 'node', supported: true, ready: true } });
+  const api = harness(async (url, options) => {
+    const body = JSON.parse(options.body);
+    if (url.endsWith('/status')) return response({ gitAvailable: true, repos: [ready] });
+    actions.push(body.action);
+    return response({ message: 'App updated.', repo: ready });
+  });
+  api.setRepos([ready]);
+  assert.equal(await api.handleCardDoubleClick(cardEvent('scott/music')), true);
+  assert.deepEqual(actions, ['update-app']);
+});
+
+test('a failed dependency installation leaves source downloaded and permits retry without claiming app readiness', async () => {
+  const source = checkout('scott/music', 'ready', {
+    project: { kind: 'node', supported: true, ready: false, message: 'Dependency installation failed. Retry Install locally.' }
+  });
+  const api = harness(async (url) => url.endsWith('/action')
+    ? response({ error: 'npm install failed: package unavailable' }, 500)
+    : response({ gitAvailable: true, repos: [source] }));
+  api.setRepos([checkout('scott/music', 'not-installed')]);
+  assert.equal(await api.handleCardDoubleClick(cardEvent('scott/music')), false);
+  assert.equal(api.state.local.repos.get('scott/music').project.ready, false);
+  assert.equal(api.state.local.pending.size, 0);
+  const rendered = api.renderLocalRepo('scott/music');
+  assert.match(rendered, /Source downloaded/);
+  assert.match(rendered, /Install locally/);
+  assert.ok(!rendered.includes('data-local-action="launch"'));
+  assert.ok(!rendered.includes('App ready'));
+  assert.match(api.els.localResults.textContent, /npm install failed/);
+});
+
+test('dirty apps launch their current checkout while automatic app updates remain blocked', async () => {
+  const actions = [];
+  const dirty = checkout('scott/music', 'dirty', { project: { kind: 'node', supported: true, ready: true } });
+  const api = harness(async (url, options) => {
+    actions.push(JSON.parse(options.body).action);
+    return response({ message: 'Launcher opened.', repo: dirty });
+  });
+  api.setRepos([dirty]);
+  assert.equal(await api.runLocalAction('scott/music', 'update-app'), false);
+  assert.equal(await api.handleCardDoubleClick(cardEvent('scott/music')), true);
+  assert.deepEqual(actions, ['launch']);
+  const rendered = api.renderLocalRepo('scott/music');
+  assert.match(rendered, /Launch uses your current checkout/);
+  assert.match(rendered, /data-local-action="launch"[^>]*aria-label=/);
+  assert.ok(!rendered.includes('data-local-action="update-app"'));
+});
+
+test('unsupported projects show source download and manual setup without offering an enabled app installer', () => {
+  const api = harness(async () => { throw new Error('Unexpected request'); });
+  api.setRepos([checkout('scott/library', 'ready', {
+    project: { kind: 'unsupported', supported: false, ready: false, message: 'Source downloaded. This project needs manual setup; see README.' }
+  })]);
+  const rendered = api.renderLocalRepo('scott/library', true);
+  assert.match(rendered, /manual setup/);
+  assert.match(rendered, /data-local-action="install"[^>]* disabled/);
+  assert.match(rendered, /Update source only/);
+  assert.equal(api.handleCardDoubleClick(cardEvent('scott/library')), false);
+});
+
+test('bulk app updates keep dependency setup sequential and continue after a Git authentication failure', async () => {
+  const project = { kind: 'node', supported: true, ready: true };
+  const statuses = [checkout('scott/private', 'ready', { project }), checkout('scott/app', 'behind', { project }), checkout('scott/source')];
+  const actions = [];
+  let concurrent = 0;
+  let maxConcurrent = 0;
+  const api = harness(async (url, options) => {
+    const body = JSON.parse(options.body);
+    if (url.endsWith('/status')) return response({ gitAvailable: true, repos: statuses.filter((repo) => body.repos.includes(repo.fullName)) });
+    actions.push(body);
+    concurrent++;
+    maxConcurrent = Math.max(maxConcurrent, concurrent);
+    await Promise.resolve();
+    concurrent--;
+    return body.fullName === 'scott/private'
+      ? response({ error: 'Git authentication failed.' }, 403)
+      : response({ message: 'Updated successfully.', repo: statuses.find((repo) => repo.fullName === body.fullName) });
+  });
+  api.setRepos(statuses);
+  await api.updateInstalledRepos();
+  assert.deepEqual(actions.map(({ action }) => action), ['update-app', 'update-app', 'update']);
+  assert.equal(maxConcurrent, 1);
+  assert.match(api.els.localProgress.textContent, /2 checked successfully, 1 failed, 0 skipped/);
+  assert.equal(api.state.server.localRepos, true);
+});
+
+test('an older local manager offers restart guidance, blocks app actions, and still permits source-only downloads', async () => {
+  const actions = [];
+  const source = checkout('scott/music', 'not-installed');
+  const api = harness(async (url, options) => {
+    if (url === '/api/health') return response({ ok: true, app: 'repo-dashboard', localRepos: true, csrfToken: 'legacy-session', platform: 'darwin' });
+    if (url.endsWith('/status')) return response({ gitAvailable: true, repos: [source] });
+    actions.push(JSON.parse(options.body).action);
+    return response({ message: 'Source downloaded.' });
+  });
+  api.setRepos([source]);
+  await api.checkServer();
+  assert.equal(api.state.server.projectInstall, false);
+  assert.match(api.els.localHint.textContent, /Restart or reinstall/);
+  assert.equal(await api.handleCardDoubleClick(cardEvent('scott/music')), false);
+  assert.match(api.renderLocalRepo('scott/music'), /data-local-action="install"[^>]* disabled/);
+  assert.equal(await api.runLocalAction('scott/music', 'clone'), true);
+  assert.deepEqual(actions, ['clone']);
 });
 
 test('bulk update skips local edits and divergence, remains sequential, and continues after Git auth fails', async () => {
@@ -187,7 +342,10 @@ test('local repository paths, branch names, and error messages render as text', 
   api.setRepos([checkout('scott/music', 'dirty', {
     path: '/Users/scott/<img src=x onerror=alert(1)>',
     branch: '<script>alert(1)</script>',
-    message: 'Local edits: <img src=x onerror=alert(2)> & "important"'
+    message: 'Local edits: <img src=x onerror=alert(2)> & "important"',
+    project: { kind: 'node', supported: true, ready: false,
+      launcherPath: '/Users/scott/Applications/<img src=x onerror=alert(3)>',
+      message: 'Setup failed: <script>alert(4)</script>' }
   })]);
   const rendered = api.renderLocalRepo('scott/music', true);
   assert.ok(!rendered.includes('<img'));
@@ -195,6 +353,8 @@ test('local repository paths, branch names, and error messages render as text', 
   assert.match(rendered, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(rendered, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.match(rendered, /&amp; &quot;important&quot;/);
+  assert.match(rendered, /&lt;img src=x onerror=alert\(3\)&gt;/);
+  assert.match(rendered, /&lt;script&gt;alert\(4\)&lt;\/script&gt;/);
 });
 
 test('large account scans batch requests and retain status for every repository', async () => {
