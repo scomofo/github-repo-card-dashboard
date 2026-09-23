@@ -33,9 +33,9 @@ Choose **Details** to inspect a repository without installing or updating it. Th
 
 | Control | What it does |
 | --- | --- |
-| **Install locally** | Downloads the repository into `~/Developer/GitHub/OWNER/REPO`, sets up supported dependencies, and creates its launcher. Existing source downloads are set up in place. |
+| **Install locally** | Downloads the repository into `~/Developer/GitHub/OWNER/REPO` (macOS) or `%USERPROFILE%\Developer\GitHub\OWNER\REPO` (Windows), sets up supported dependencies, and creates its launcher. Existing source downloads are set up in place. |
 | **Update app** | Fetches from GitHub, fast-forwards an eligible checkout on its matching upstream branch, and refreshes project setup. |
-| **Launch app** | Starts the installed project's launch command in Terminal. |
+| **Launch app** | Starts the installed project's launch command in Terminal (macOS) or a new console window (Windows). |
 | **Update installed** | Updates eligible repositories in sequence and reports the result for each. |
 | **Scan local status** | Refreshes local checkout status. |
 | **Finder / Terminal** | Opens the installed repository's folder on your Mac. |
@@ -56,7 +56,7 @@ To update the dashboard itself, download or pull the latest project and run `ins
 
 The result identifies the failed stage and, when recognized, its cause: for example a Node version requirement, a dependency conflict, a lockfile mismatch, a network problem, disk space, or folder permissions. The dashboard does not delete lockfiles, disable certificate checks, or force incompatible dependency versions to make a retry pass.
 
-For dependency failures, open the displayed `REPO.install.log`. Git command failures also write a `REPO.git.log` when the diagnostic folder is writable. In Finder, choose **Go → Go to Folder** and paste `~/Library/Application Support/Repo Dashboard Projects/OWNER/`, replacing `OWNER` with your GitHub name. Open the relevant log in TextEdit. Logs remain on your Mac with private file permissions and common credential formats redacted; inspect them for other sensitive output before sharing an excerpt.
+For dependency failures, open the displayed `REPO.install.log`. Git command failures also write a `REPO.git.log` when the diagnostic folder is writable. In Finder, choose **Go → Go to Folder** and paste `~/Library/Application Support/Repo Dashboard Projects/OWNER/`, replacing `OWNER` with your GitHub name. On Windows the same logs are under `%APPDATA%\Repo Dashboard Projects\OWNER\`. Open the relevant log in TextEdit. Logs remain on your Mac with private file permissions and common credential formats redacted; inspect them for other sensitive output before sharing an excerpt.
 
 Include the final error lines when reporting an issue. A failed build is recorded separately from dependency installation, and the log includes the dashboard's Node version and processor. For comparison, these read-only Terminal commands show the versions in your current shell:
 
@@ -106,7 +106,7 @@ npm --version
 
 Use a launcher so the local command server starts with the dashboard:
 
-- Windows: double-click `launch-dashboard.bat`.
+- Windows: double-click `launch-dashboard.bat`. It uses the `PORT` environment variable when set (default `8787`) and opens the browser once the server answers.
 - macOS without installing an app: double-click `launch-dashboard.command`, or run `bash launch-dashboard.command`.
 - Any platform with Node.js: run `npm start`, then open [the local dashboard](http://127.0.0.1:8787).
 

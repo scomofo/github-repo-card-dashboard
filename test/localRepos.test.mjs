@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
-import { classifyLocalRepoFailure, createLocalRepoManager } from '../src/localRepos.mjs';
+import { classifyLocalRepoFailure, createLocalRepoManager, validateFullName } from '../src/localRepos.mjs';
 
 const exec = promisify(execFile);
 const fullName = 'owner/demo';
@@ -437,4 +437,12 @@ else { process.stderr.write(scenario.stderr); process.exit(128); }
     assert.doesNotMatch(error.message, /private-option-never-publish|Git is unavailable/);
     return true;
   });
+});
+
+test('repository names reject Windows reserved device names on every platform', () => {
+  for (const fullName of ['owner/CON', 'owner/prn', 'owner/Aux.md', 'owner/com1', 'owner/LPT9', 'owner/nul']) {
+    assert.throws(() => validateFullName(fullName), { statusCode: 400 }, fullName);
+  }
+  assert.equal(validateFullName('owner/demo'), 'owner/demo');
+  assert.equal(validateFullName('owner/console'), 'owner/console');
 });

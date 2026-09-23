@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import path from 'node:path';
+import { dashboardProjectsRoot, isWindowsReservedName } from './platformPaths.mjs';
 
-export const DEFAULT_DIAGNOSTICS_ROOT = path.join(homedir(), 'Library', 'Application Support', 'Repo Dashboard Projects');
+export const DEFAULT_DIAGNOSTICS_ROOT = dashboardProjectsRoot();
 
 // Logs stay on the local computer. Redact common credential formats as an
 // additional precaution; arbitrary project output still needs review before sharing.
@@ -20,7 +20,7 @@ export function redactDiagnostics(value) {
 
 export async function writeDiagnosticLog({ root = DEFAULT_DIAGNOSTICS_ROOT, fullName, kind, content }) {
   if (typeof fullName !== 'string' || !/^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?\/[a-z\d_.-]{1,100}$/i.test(fullName)
-    || ['.', '..', '.git'].includes(fullName.split('/')[1].toLowerCase()) || !['git', 'install'].includes(kind)) {
+    || ['.', '..', '.git'].includes(fullName.split('/')[1].toLowerCase()) || isWindowsReservedName(fullName.split('/')[1]) || !['git', 'install'].includes(kind)) {
     throw new Error('Invalid diagnostic log destination.');
   }
   const [owner, name] = fullName.split('/');

@@ -8,6 +8,20 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Syntax-check every module
+        run: |
+          while IFS= read -r file; do
+            node --check "$file"
+          done < <(git ls-files '*.mjs')
+      - run: bash -n launch-dashboard.command install-macos.command
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -17,6 +31,18 @@ jobs:
           node-version: 20
       - run: npm test
       - run: bash -n launch-dashboard.command install-macos.command
+
+  windows-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm test
+      - name: Syntax-check every module
+        shell: pwsh
+        run: Get-ChildItem -Recurse -Filter *.mjs | ForEach-Object { node --check $_.FullName }
 
   macos-install:
     runs-on: macos-latest
