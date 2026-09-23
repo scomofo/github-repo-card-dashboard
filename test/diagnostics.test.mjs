@@ -23,7 +23,9 @@ test('diagnostic writes are private and reject symlink destinations', async (t) 
   const root = path.join(temp, 'logs');
   const input = { root, fullName: 'owner/repo', kind: 'git', content: 'fatal: ECONNRESET\nGITHUB_TOKEN=secret-value' };
   const file = await writeDiagnosticLog(input);
-  assert.equal((await stat(file)).mode & 0o777, 0o600);
+  const mode = (await stat(file)).mode & 0o777;
+  if (process.platform === 'win32') assert.equal(mode, 0o666);
+  else assert.equal(mode, 0o600);
   assert.doesNotMatch(await readFile(file, 'utf8'), /secret-value/);
   const outside = path.join(temp, 'outside');
   await writeFile(outside, 'keep');
