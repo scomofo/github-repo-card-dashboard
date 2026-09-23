@@ -2,10 +2,10 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { classifyPackageFailure, writeDiagnosticLog } from './diagnostics.mjs';
+import { dashboardAppsRoot, dashboardProjectsRoot, isWindowsReservedName } from './platformPaths.mjs';
 
 const LOCKS = { npm: ['npm-shrinkwrap.json', 'package-lock.json'], pnpm: ['pnpm-lock.yaml'], yarn: ['yarn.lock'], bun: ['bun.lock', 'bun.lockb'] };
 const INPUTS = ['package.json', ...Object.values(LOCKS).flat(), '.npmrc', '.yarnrc', '.yarnrc.yml', 'pnpm-workspace.yaml', 'bunfig.toml'];
@@ -22,7 +22,8 @@ export class ProjectInstallError extends Error {
 function identity({ directory, fullName } = {}) {
   if (typeof directory !== 'string' || !path.isAbsolute(directory)
     || typeof fullName !== 'string' || !/^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?\/[a-z\d_.-]{1,100}$/i.test(fullName)
-    || ['.', '..', '.git'].includes(fullName.split('/')[1].toLowerCase())) {
+    || ['.', '..', '.git'].includes(fullName.split('/')[1].toLowerCase())
+    || isWindowsReservedName(fullName.split('/')[1])) {
     throw new ProjectInstallError('Choose a repository with an absolute local folder and GitHub owner/name.', 400);
   }
   return { directory: path.resolve(directory), fullName };
@@ -111,17 +112,64 @@ export async function inspectProject(input) {
     message: `Install dependencies with ${manager} and create a launcher for ${manager} run ${script}.` };
 }
 
+/** Quote one argv element for cmd.exe (CommandLineToArgvW rules). */
+export function windowsQuote(value) {
+  if (!/[\s"]/.test(value)) return value;
+  return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
+}
+
+/** On Windows, CreateProcess cannot execute .cmd/.bat files directly: route
+ * them through cmd.exe while keeping the argv array intact. POSIX keeps
+ * shell:false with the file executed directly. */
+export function spawnTarget(file, args, platform = process.platform) {
+  if (platform === 'win32' && /\.(?:cmd|bat)$/i.test(file)) {
+    const line = [file, ...args].map(windowsQuote).join(' ');
+    return { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${line}"`] };
+  }
+  return { file, args };
+}
+
+/** Locate a package manager executable on PATH. On Windows the managers are
+ * .cmd shims (npm.cmd, pnpm.cmd, ...), which PATHEXT resolves; probe those
+ * extensions explicitly so lookup works without shell:true. */
+export async function findManagerPath(manager, { env = process.env, platform = process.platform } = {}) {
+  const names = platform === 'win32' ? [`${manager}.cmd`, `${manager}.bat`, `${manager}.exe`, manager] : [manager];
+  const mode = platform === 'win32' ? constants.F_OK : constants.X_OK;
+  for (const folder of (env.PATH || '').split(path.delimiter).filter((part) => path.isAbsolute(part))) {
+    for (const name of names) {
+      const candidate = path.join(folder, name);
+      try { await access(candidate, mode); return candidate; } catch { /* Try the next candidate. */ }
+    }
+  }
+  return null;
+}
+
+/** Build the double-clickable launcher for an installed app: a bash .command
+ * on POSIX, a batch .bat on Windows. Both embed LAUNCHER_MARKER so describe()
+ * can verify the launcher is still ours. */
+export function buildLauncher({ platform = process.platform, nodePath, scriptPath, recordPath }) {
+  if (platform === 'win32') {
+    return '@echo off\r\n'
+      + `rem ${LAUNCHER_MARKER}`
+      + `${windowsQuote(nodePath)} ${windowsQuote(scriptPath)} ${windowsQuote(recordPath)}\r\n`;
+  }
+  return '#!/bin/bash\n' + LAUNCHER_MARKER
+    + 'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"\n'
+    + `exec ${shellQuote(nodePath)} ${shellQuote(scriptPath)} ${shellQuote(recordPath)}\n`;
+}
+
 /** Bounded subprocess with process-group cancellation; logs never go to HTTP errors. */
-function runBounded(file, args, { cwd, env, timeoutMs, maxBytes = 2 * 1024 * 1024 }) {
+function runBounded(file, args, { cwd, env, timeoutMs, platform = process.platform, maxBytes = 2 * 1024 * 1024 }) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
     let timer;
     let settled = false;
     let failure;
-    const child = spawn(file, args, { cwd, env, shell: false, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    const { file: spawnFile, args: spawnArgs } = spawnTarget(file, args, platform);
+    const child = spawn(spawnFile, spawnArgs, { cwd, env, shell: false, detached: platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     const kill = () => {
-      try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); }
+      try { if (platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); }
       catch { try { child.kill('SIGKILL'); } catch { /* Process already exited. */ } }
     };
     const finish = (error) => {
@@ -166,15 +214,15 @@ async function atomicWrite(file, text, mode) {
 }
 
 export function createProjectInstaller({
-  stateRoot = path.join(homedir(), 'Library', 'Application Support', 'Repo Dashboard Projects'),
-  launchersRoot = path.join(homedir(), 'Applications', 'Repo Apps'),
+  stateRoot,
+  launchersRoot,
   runtimeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
   timeoutMs = 10 * 60_000,
   env = process.env,
   platform = process.platform,
 } = {}) {
-  stateRoot = path.resolve(stateRoot);
-  launchersRoot = path.resolve(launchersRoot);
+  stateRoot = path.resolve(stateRoot ?? dashboardProjectsRoot(platform, env));
+  launchersRoot = path.resolve(launchersRoot ?? dashboardAppsRoot(platform, env));
   runtimeRoot = path.resolve(runtimeRoot);
   const childEnv = { ...env, NODE_ENV: 'development', CI: '1', COREPACK_ENABLE_AUTO_PIN: '0', COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' };
   // A browser's GitHub token is never included in these options. Preserve the
@@ -191,14 +239,13 @@ export function createProjectInstaller({
 
   function paths(fullName) {
     const [owner, repo] = fullName.split('/');
-    return { recordPath: path.join(stateRoot, owner, `${repo}.json`), logPath: path.join(stateRoot, owner, `${repo}.install.log`), launcherPath: path.join(launchersRoot, owner, `${repo}.command`) };
+    const launcherExt = platform === 'win32' ? '.bat' : '.command';
+    return { recordPath: path.join(stateRoot, owner, `${repo}.json`), logPath: path.join(stateRoot, owner, `${repo}.install.log`), launcherPath: path.join(launchersRoot, owner, `${repo}${launcherExt}`) };
   }
 
   async function findManager(manager) {
-    for (const folder of (childEnv.PATH || '').split(path.delimiter).filter((part) => path.isAbsolute(part))) {
-      const candidate = path.join(folder, manager);
-      try { await access(candidate, constants.X_OK); return candidate; } catch { /* Try the next PATH entry. */ }
-    }
+    const found = await findManagerPath(manager, { env: childEnv, platform });
+    if (found) return found;
     throw new ProjectInstallError(`${manager} is required by this repository but is not installed or not on PATH. Install ${manager}, reopen Repo Dashboard, and choose Install locally again.`, 503);
   }
 
@@ -250,7 +297,7 @@ export function createProjectInstaller({
         if (project.manager === 'bun') args = ['install', project.hasLock ? '--frozen-lockfile' : '--no-save'];
         if (project.manager === 'yarn') {
           let version;
-          try { version = await runBounded(managerPath, ['--version'], { cwd: directory, env: childEnv, timeoutMs: 30_000, maxBytes: 64 * 1024 }); }
+          try { version = await runBounded(managerPath, ['--version'], { cwd: directory, env: childEnv, timeoutMs: 30_000, maxBytes: 64 * 1024, platform }); }
           catch { throw new ProjectInstallError('Yarn could not start. Check the project’s required Yarn version in Terminal and retry.', 503); }
           const major = Number(version.output.trim().split('.')[0]);
           if (!Number.isInteger(major) || major < 1) throw new ProjectInstallError('Yarn did not report a supported version. Check Yarn in Terminal.');
@@ -260,13 +307,13 @@ export function createProjectInstaller({
         let setupStage = 'install';
         let log = `${project.manager} ${args.join(' ')}\nRepository: ${fullName}\nNode: ${process.version}\nPlatform: ${process.platform} ${process.arch}\n`;
         try {
-          const result = await runBounded(managerPath, args, { cwd: directory, env: childEnv, timeoutMs });
+          const result = await runBounded(managerPath, args, { cwd: directory, env: childEnv, timeoutMs, platform });
           log += result.output;
           await writeDiagnosticLog({ root: stateRoot, fullName, kind: 'install', content: log });
           if (project.needsBuild) {
             setupStage = 'build';
             log += `\n${project.manager} run build\n`;
-            const built = await runBounded(managerPath, ['run', 'build'], { cwd: directory, env: childEnv, timeoutMs });
+            const built = await runBounded(managerPath, ['run', 'build'], { cwd: directory, env: childEnv, timeoutMs, platform });
             log += built.output;
             await writeDiagnosticLog({ root: stateRoot, fullName, kind: 'install', content: log });
           }
@@ -285,9 +332,8 @@ export function createProjectInstaller({
       }
       const record = { version: 1, directory, fullName, kind: project.kind, manager: project.manager, managerPath, script: project.script,
         fingerprint: project.fingerprint, installedAt: new Date().toISOString() };
-      const launcher = '#!/bin/bash\n' + LAUNCHER_MARKER
-        + 'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"\n'
-        + `exec ${shellQuote(process.execPath)} ${shellQuote(path.join(runtimeRoot, 'scripts', 'project-launcher.mjs'))} ${shellQuote(recordPath)}\n`;
+      const launcher = buildLauncher({ platform, nodePath: process.execPath,
+        scriptPath: path.join(runtimeRoot, 'scripts', 'project-launcher.mjs'), recordPath });
       await atomicWrite(launcherPath, launcher, 0o700);
       await atomicWrite(recordPath, `${JSON.stringify(record, null, 2)}\n`, 0o600);
       return { ...await describe({ directory, fullName }), message: `Installed ${fullName} locally. Double-click ${launcherPath} to run it.` };
@@ -298,9 +344,18 @@ export function createProjectInstaller({
     const project = await describe(input);
     if (!project.ready) throw new ProjectInstallError(project.message);
     if (childEnv.REPO_DASHBOARD_NO_OPEN !== '1') {
-      if (platform !== 'darwin') throw new ProjectInstallError('Launch app is available when this dashboard runs on your Mac.', 400);
-      try { await runBounded('/usr/bin/open', ['-a', 'Terminal', project.launcherPath], { env: childEnv, timeoutMs: 10_000 }); }
-      catch { throw new ProjectInstallError('macOS could not open the app launcher. Double-click its .command file in Finder.', 502); }
+      if (platform === 'darwin') {
+        try { await runBounded('/usr/bin/open', ['-a', 'Terminal', project.launcherPath], { env: childEnv, timeoutMs: 10_000, platform }); }
+        catch { throw new ProjectInstallError('macOS could not open the app launcher. Double-click its .command file in Finder.', 502); }
+      } else if (platform === 'win32') {
+        // `start` detaches the launcher into its own console window instead of
+        // holding this request open until the app exits.
+        const comspec = childEnv.ComSpec || process.env.ComSpec || 'cmd.exe';
+        try { await runBounded(comspec, ['/d', '/s', '/c', `start "" ${windowsQuote(project.launcherPath)}`], { env: childEnv, timeoutMs: 10_000, platform }); }
+        catch { throw new ProjectInstallError('Windows could not open the app launcher. Double-click its .bat file in Explorer.', 502); }
+      } else {
+        throw new ProjectInstallError('Launch app is available when this dashboard runs on macOS or Windows.', 400);
+      }
     }
     return { ...project, message: `Opening ${identity(input).fullName}. App output appears in Terminal.` };
   }

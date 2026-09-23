@@ -4,12 +4,20 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { inspectProject } from '../src/projectInstall.mjs';
+import { inspectProject, spawnTarget, windowsQuote } from '../src/projectInstall.mjs';
 
 function openBrowser(url) {
-  if (process.platform !== 'darwin' || process.env.REPO_DASHBOARD_NO_OPEN === '1') return;
-  const child = spawn('/usr/bin/open', [url], { stdio: 'ignore', shell: false });
-  child.on('error', () => console.log(`Open ${url} in your browser.`));
+  if (process.env.REPO_DASHBOARD_NO_OPEN === '1') return;
+  if (process.platform === 'darwin') {
+    const child = spawn('/usr/bin/open', [url], { stdio: 'ignore', shell: false });
+    child.on('error', () => console.log(`Open ${url} in your browser.`));
+    return;
+  }
+  if (process.platform === 'win32') {
+    // start's first quoted argument is the window title; the URL follows it.
+    const child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `start "" ${windowsQuote(url)}`], { stdio: 'ignore', shell: false, windowsHide: true });
+    child.on('error', () => console.log(`Open ${url} in your browser.`));
+  }
 }
 
 export function loopbackUrl(text) {
@@ -70,7 +78,8 @@ export async function launchProject(recordPath) {
   }
   if (!['npm', 'pnpm', 'yarn', 'bun'].includes(saved.manager) || !path.isAbsolute(saved.managerPath) || !['dev', 'start'].includes(saved.script)) throw new Error('This app launcher needs to be installed again.');
   console.log(`Starting ${saved.fullName} with ${saved.manager} run ${saved.script}.\nKeep this Terminal window open. Press Control-C to stop.`);
-  const child = spawn(saved.managerPath, ['run', saved.script], { cwd: saved.directory, shell: false, detached: process.platform !== 'win32',
+  const { file: spawnFile, args: spawnArgs } = spawnTarget(saved.managerPath, ['run', saved.script]);
+  const child = spawn(spawnFile, spawnArgs, { cwd: saved.directory, shell: false, detached: process.platform !== 'win32',
     env: { ...process.env, NODE_ENV: 'development', HOST: '127.0.0.1', BROWSER: 'none' }, stdio: ['inherit', 'pipe', 'pipe'] });
   let opened = false;
   let buffer = '';
@@ -111,7 +120,7 @@ export async function launchProject(recordPath) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    if (!process.argv[2]) throw new Error('Launch this app using its installed .command file.');
+    if (!process.argv[2]) throw new Error('Launch this app using its installed launcher file.');
     await launchProject(process.argv[2]);
   } catch (error) { console.error(`Repo App: ${error.message}`); process.exitCode = 1; }
 }

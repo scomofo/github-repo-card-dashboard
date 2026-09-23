@@ -2,15 +2,15 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
 import { mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { appDataRoot, dashboardCacheRoot, dashboardLogRoot } from '../src/platformPaths.mjs';
 
 const runtime = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(process.env.PORT || 8787);
-const cache = join(homedir(), 'Library', 'Caches', 'Repo Dashboard');
-const logDirectory = join(homedir(), 'Library', 'Logs', 'Repo Dashboard');
+const cache = dashboardCacheRoot();
+const logDirectory = dashboardLogRoot();
 const logPath = join(logDirectory, 'server.log');
 const lockPath = join(cache, `launch-${port}.lock`);
 const pidPath = join(cache, `server-${port}.json`);
@@ -139,7 +139,7 @@ try {
   if (process.argv.includes('--stop')) {
     await stop();
   } else {
-    if (await stat(join(homedir(), 'Library', 'Application Support', '.repo-dashboard-install.lock')).catch(() => null)) {
+    if (await stat(join(appDataRoot(), '.repo-dashboard-install.lock')).catch(() => null)) {
       throw new Error('Repo Dashboard is being installed or updated. Wait for the installer to finish and open it again.');
     }
     await start();

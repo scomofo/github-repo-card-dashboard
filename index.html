@@ -2754,7 +2754,8 @@
       const apps = installed.filter((repo) => repo.project?.ready);
       els.localConnection.textContent = !state.server.checked ? 'Checking local manager…'
         : !available ? 'Local manager offline' : !state.local.gitAvailable && state.local.scanned ? 'Git needs setup'
-        : state.server.platform === 'darwin' ? 'Connected to this Mac' : 'Local manager connected';
+        : state.server.platform === 'darwin' ? 'Connected to this Mac'
+        : state.server.platform === 'win32' ? 'Connected to this PC' : 'Local manager connected';
       els.localConnection.className = `badge ${available ? 'ok' : 'warn'}`;
       els.localRoot.textContent = state.local.root || 'Available when the local manager connects';
       els.localInstalled.textContent = state.local.scanned ? String(installed.length) : '—';
@@ -2794,7 +2795,7 @@
       const actionLabel = pending ? 'Working…' : action === 'update-app' ? 'Update app' : action === 'launch' ? 'Launch app' : 'Install locally';
       const button = (actionName, text, enabled, primary = false) => `<button type="button" ${primary ? 'class="primary"' : ''} data-local-action="${actionName}" data-local-repo="${escapeAttr(fullName)}" ${enabled ? '' : 'disabled'} aria-label="${escapeAttr(`${text}: ${fullName}`)}">${text}</button>`;
       const canOpen = available && state.server.platform === 'darwin' && repo?.installed && repo.state !== 'blocked' && !busy;
-      const canLaunch = canOpen && state.server.projectInstall && repo.project?.ready;
+      const canLaunch = available && ['darwin', 'win32'].includes(state.server.platform) && repo?.installed && repo.state !== 'blocked' && state.server.projectInstall && repo.project?.ready && !busy;
       const appMessage = repo?.project?.message || (repo?.installed && !repo.project?.ready ? 'Source is downloaded. App setup has not completed.' : '');
       return `<div class="local-repo">
         <div class="local-state-row"><span class="badge ${tone}">${escapeHtml(label)}</span>
@@ -2900,7 +2901,7 @@
       const local = state.local.repos.get(fullName);
       if (action === 'clone' && local?.state !== 'not-installed' || ['update', 'update-app'].includes(action) && !canUpdateLocal(local)) return false;
       if (action === 'install' && !canInstallLocal(local)) return false;
-      if (action === 'launch' && !(state.server.platform === 'darwin' && local?.installed && local.state !== 'blocked' && local.project?.ready)) return false;
+      if (action === 'launch' && !(['darwin', 'win32'].includes(state.server.platform) && local?.installed && local.state !== 'blocked' && local.project?.ready)) return false;
       state.local.pending.add(fullName);
       const actionVerb = { clone: 'Downloading source for', update: 'Updating source for', install: 'Installing app and dependencies for', 'update-app': 'Updating app and dependencies for', launch: 'Launching' }[action] || 'Opening';
       if (!bulk) els.localProgress.textContent = `${actionVerb} ${fullName}… Keep this window open until the result appears.`;

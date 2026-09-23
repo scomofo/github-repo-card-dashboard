@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { createProjectInstaller, ProjectInstallError } from './projectInstall.mjs';
 import { DEFAULT_DIAGNOSTICS_ROOT, writeDiagnosticLog } from './diagnostics.mjs';
+import { isWindowsReservedName } from './platformPaths.mjs';
 const ACTIONS = new Set(['clone', 'update', 'open', 'terminal', 'install', 'update-app', 'launch']);
 
 function execBounded(file, args, options) {
@@ -86,14 +87,15 @@ export class LocalRepoError extends Error {
   }
 }
 
-function validateFullName(value) {
+export function validateFullName(value) {
   if (typeof value !== 'string' || value.length > 140) {
     throw new LocalRepoError('Choose a repository using its GitHub owner/name.', 400);
   }
   const parts = value.split('/');
   const [owner, name] = parts;
   if (parts.length !== 2 || !/^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?$/i.test(owner)
-    || !/^[a-z\d_.-]{1,100}$/i.test(name) || name === '.' || name === '..' || name.toLowerCase() === '.git') {
+    || !/^[a-z\d_.-]{1,100}$/i.test(name) || name === '.' || name === '..' || name.toLowerCase() === '.git'
+    || isWindowsReservedName(name)) {
     throw new LocalRepoError('Choose a repository using its GitHub owner/name.', 400);
   }
   return value;
@@ -324,6 +326,12 @@ export function createLocalRepoManager({
     const names = [...new Set(fullNames.map(validateFullName))];
     const available = await gitAvailable();
     const repos = new Array(names.length);
+    // Entries for repositories that are no longer requested would otherwise
+    // accumulate forever; drop expired ones before scanning.
+    const now = Date.now();
+    for (const [key, entry] of cache) {
+      if (now - entry.at >= cacheTtlMs) cache.delete(key);
+    }
     let index = 0;
     await Promise.all(Array.from({ length: Math.min(4, names.length) }, async () => {
       for (;;) {

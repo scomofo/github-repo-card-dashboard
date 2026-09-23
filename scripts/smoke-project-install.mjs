@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { dashboardProjectsRoot } from '../src/platformPaths.mjs';
 
 const execFileAsync = promisify(execFile);
 const runtimeRoot = path.resolve(process.argv[2] || fileURLToPath(new URL('..', import.meta.url)));
@@ -14,7 +15,7 @@ const reinstallScript = process.argv[3] ? path.resolve(process.argv[3]) : null;
 const { createProjectInstaller } = await import(pathToFileURL(path.join(runtimeRoot, 'src/projectInstall.mjs')));
 const scratch = await mkdtemp(path.join(tmpdir(), "repo app's smoke "));
 const owner = `repo-smoke-${path.basename(scratch).slice(-6).toLowerCase()}`;
-const defaultStateDirectory = path.join(homedir(), 'Library', 'Application Support', 'Repo Dashboard Projects', owner);
+const defaultStateDirectory = path.join(dashboardProjectsRoot(), owner);
 
 try {
   const directory = path.join(scratch, 'source checkout');
