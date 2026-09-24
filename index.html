@@ -1942,7 +1942,7 @@
           viewer {
             login
             repositories(
-              first: 50,
+              first: 20,
               after: $cursor,
               ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
               orderBy: {field: PUSHED_AT, direction: DESC}
