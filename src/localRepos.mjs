@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, realpath } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { createProjectInstaller, ProjectInstallError } from './projectInstall.mjs';
-import { DEFAULT_DIAGNOSTICS_ROOT, writeDiagnosticLog } from './diagnostics.mjs';
-import { isWindowsReservedName } from './platformPaths.mjs';
+import { writeDiagnosticLog } from './diagnostics.mjs';
+import { dashboardProjectsRoot, isWindowsReservedName } from './platformPaths.mjs';
 const ACTIONS = new Set(['clone', 'update', 'open', 'terminal', 'install', 'update-app', 'launch']);
+const LOG_TAIL_BYTES = 64 * 1024;
 
 function execBounded(file, args, options) {
   return new Promise((resolve, reject) => {
@@ -99,6 +100,23 @@ export function validateFullName(value) {
     throw new LocalRepoError('Choose a repository using its GitHub owner/name.', 400);
   }
   return value;
+}
+
+/** How to open a repository folder or terminal on this computer. Returns null
+ * where the dashboard has no supported opener. `platform` override exists for tests. */
+export function desktopTarget(action, directory, platform = process.platform) {
+  if (action !== 'open' && action !== 'terminal') return null;
+  if (platform === 'darwin') {
+    return action === 'terminal'
+      ? { file: '/usr/bin/open', args: ['-a', 'Terminal', directory] }
+      : { file: '/usr/bin/open', args: [directory] };
+  }
+  if (platform === 'win32') {
+    if (action === 'open') return { file: 'explorer.exe', args: [directory] };
+    // Open a new console window rooted at the checkout; cmd /k keeps it open.
+    return { file: 'cmd.exe', args: ['/d', '/s', '/c', 'start', '', '/d', directory, 'cmd', '/k'] };
+  }
+  return null;
 }
 
 function githubName(url) {
@@ -201,9 +219,10 @@ export function createLocalRepoManager({
   platform = process.platform,
   remoteUrlForTests,
   projectInstaller = createProjectInstaller({ platform }),
-  diagnosticsRoot = DEFAULT_DIAGNOSTICS_ROOT,
+  diagnosticsRoot = dashboardProjectsRoot(platform, process.env),
 } = {}) {
   const repoRoot = path.resolve(root);
+  const logsRoot = path.resolve(diagnosticsRoot);
   const locks = new Set();
   const cache = new Map();
   let gitCheck;
@@ -450,11 +469,14 @@ export function createLocalRepoManager({
         message = await updateRepository(fullName);
       } else {
         await verifyRepository(fullName);
-        if (platform !== 'darwin') throw new LocalRepoError('Opening Finder or Terminal is available when this dashboard runs on your Mac.', 400);
-        const args = action === 'terminal' ? ['-a', 'Terminal', directory] : [directory];
-        try { await execBounded('/usr/bin/open', args, { timeout: 10_000, maxBuffer: 64 * 1024, env }); }
-        catch { throw new LocalRepoError('macOS could not open this folder. Open the displayed repository path manually.', 502); }
-        message = action === 'terminal' ? `Opened ${fullName} in Terminal.` : `Opened ${fullName} in Finder.`;
+        const target = desktopTarget(action, directory, platform);
+        if (!target) throw new LocalRepoError('Opening the folder or a terminal is available when this dashboard runs on macOS or Windows.', 400);
+        const openerName = platform === 'win32'
+          ? (action === 'terminal' ? 'Command Prompt' : 'Explorer')
+          : (action === 'terminal' ? 'Terminal' : 'Finder');
+        try { await execBounded(target.file, target.args, { timeout: 10_000, maxBuffer: 64 * 1024, env }); }
+        catch { throw new LocalRepoError(`${openerName} could not open this folder. Open the displayed repository path manually.`, 502); }
+        message = `Opened ${fullName} in ${openerName}.`;
       }
       cache.delete(key);
       return { message, repo: await inspect(fullName) };
@@ -475,5 +497,23 @@ export function createLocalRepoManager({
     }
   }
 
-  return { status, runAction };
+  /** Tail of the install log for live progress streaming. Only the validated
+   * owner/name pair selects the file; no caller-supplied paths are used. */
+  async function readLog({ fullName } = {}) {
+    validateFullName(fullName);
+    const [owner, name] = fullName.split('/');
+    const file = path.join(logsRoot, owner, `${name}.install.log`);
+    if (!file.startsWith(logsRoot + path.sep)) throw new LocalRepoError('Choose a repository using its GitHub owner/name.', 400);
+    let content;
+    try {
+      content = await readFile(file, 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') return { exists: false };
+      throw new LocalRepoError('The install log could not be read.', 500);
+    }
+    const truncated = content.length > LOG_TAIL_BYTES;
+    return { exists: true, truncated, log: truncated ? content.slice(-LOG_TAIL_BYTES) : content };
+  }
+
+  return { status, runAction, readLog };
 }

@@ -134,6 +134,7 @@ test('double-click installs once across duplicate cards, while background clicks
   const api = harness(async (url, options) => {
     const body = JSON.parse(options.body);
     if (url.endsWith('/status')) return response({ root: '/Users/scott/Repos', gitAvailable: true, repos: [ready] });
+    if (url.endsWith('/log')) return response({ exists: false });
     actions.push(body);
     return await new Promise((resolve) => { finishInstall = resolve; });
   });
@@ -165,6 +166,7 @@ test('double-click updates a ready app and refreshes its dependency installation
   const api = harness(async (url, options) => {
     const body = JSON.parse(options.body);
     if (url.endsWith('/status')) return response({ gitAvailable: true, repos: [ready] });
+    if (url.endsWith('/log')) return response({ exists: false });
     actions.push(body.action);
     return response({ message: 'App updated.', repo: ready });
   });

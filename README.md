@@ -1,8 +1,8 @@
 # GitHub Repo Card Dashboard
 
-A local macOS repository dashboard: double-click a repository card to install it on your Mac, including supported project dependencies and a launcher. Double-click an installed card to update its code and dependencies. Repository activity, failing CI, reviews, and issues stay together in the same view.
+A local repository dashboard for macOS and Windows: double-click a repository card to install it on your computer, including supported project dependencies and a launcher. Double-click an installed card to update its code and dependencies. Repository activity, failing CI, reviews, and issues stay together in the same view.
 
-The dashboard is a macOS launcher for a browser interface backed by a local Node.js server. Node.js and Git are prerequisites; they are not bundled. Automatic project setup supports Node.js apps with a root `package.json` and a `dev` or `start` script, plus static sites with a root `index.html`. Other repositories are downloaded locally with guidance for manual setup.
+The dashboard is a launcher for a browser interface backed by a local Node.js server. Node.js and Git are prerequisites; they are not bundled. Automatic project setup supports Node.js apps with a root `package.json` and a `dev` or `start` script, Godot projects with a `project.godot` (the launcher opens the Godot editor), plus static sites with a root `index.html`. Other repositories are downloaded locally with guidance for manual setup.
 
 ## Install on macOS
 
@@ -22,6 +22,15 @@ bash "/path/to/github-repo-card-dashboard/install-macos.command"
 
 The installer signs its generated app locally for bundle integrity; it does not provide a Developer ID signature or notarization. Downloaded scripts and the generated app may trigger macOS security prompts. If your Mac's software policy blocks them, use your organization's approved software process.
 
+## Install on Windows
+
+1. Install **Node.js 24 LTS** from [nodejs.org](https://nodejs.org/en/download). The dashboard itself supports Node 20+, but individual repositories can require newer versions.
+2. Install **Git for Windows** from [git-scm.com](https://git-scm.com/download/win) and make sure `git` works in a Command Prompt.
+3. Clone this repository or download and extract its ZIP from GitHub.
+4. Double-click **`launch-dashboard.bat`** in the extracted project folder. It starts the local service, waits until it is ready, and opens your default browser.
+
+The batch file uses the `PORT` environment variable when set (default `8787`). Repository checkouts are kept under `%USERPROFILE%\Developer\GitHub\OWNER\REPO`. Project setup records and install logs live in `%APPDATA%\Repo Dashboard Projects\OWNER\`, and generated app launchers in `%APPDATA%\Repo Dashboard Apps\OWNER\`.
+
 ## Install, update, and run your repositories
 
 1. Connect GitHub in the dashboard to load your repository cards.
@@ -38,25 +47,28 @@ Choose **Details** to inspect a repository without installing or updating it. Th
 | **Launch app** | Starts the installed project's launch command in Terminal (macOS) or a new console window (Windows). |
 | **Update installed** | Updates eligible repositories in sequence and reports the result for each. |
 | **Scan local status** | Refreshes local checkout status. |
-| **Finder / Terminal** | Opens the installed repository's folder on your Mac. |
+| **Explorer / Finder** | Opens the installed repository's folder in Explorer (Windows) or Finder (macOS). |
+| **Command Prompt / Terminal** | Opens a terminal rooted at the installed repository's folder. |
 
-For Node.js apps, setup selects the project's package manager from its declaration or lockfile and uses its `dev` script when available, otherwise `start`. When a project has `start` and `build` but no `dev` script, installation also runs its build. Standalone Electron packaging commands are skipped: running an Electron app from source does not need an installer package, and a Windows packaging target must not run during Mac setup. Compilation followed by packaging is still treated as a build. The selected package manager must already be installed; modern Yarn projects need a committed `yarn.lock`. Setup does not install global runtimes or configure API keys, databases, environment files, or other external services.
+For Node.js apps, setup selects the project's package manager from its declaration or lockfile and uses its `dev` script when available, otherwise `start`. When a project has `start` and `build` but no `dev` script, installation also runs its build. Standalone Electron packaging commands are skipped: running an Electron app from source does not need an installer package, and a platform-specific packaging target must not run during setup on another platform. Compilation followed by packaging is still treated as a build. The selected package manager must already be installed; modern Yarn projects need a committed `yarn.lock`. Setup does not install global runtimes or configure API keys, databases, environment files, or other external services.
+
+For Godot projects, installation creates a launcher that opens the project in the Godot editor. Godot 4.x must already be installed with its executable on `PATH`. Python projects are detected and reported with setup guidance, but their environments are not created automatically.
 
 Static sites run through a local server. A build-free site can also have a `package.json` used only for tests, linting, or formatting; those development dependencies are not installed for its browser launcher. Projects needing compilation, runtime packages, or custom setup still require a supported launch script. Unsupported projects keep their downloaded code and show a manual-setup message instead of being marked ready to launch.
 
-Project setup records and install logs live in `~/Library/Application Support/Repo Dashboard Projects/OWNER/`, outside both your checkouts and the dashboard runtime. Reinstalling the dashboard preserves these records and the project launchers.
+Project setup records and install logs live in `~/Library/Application Support/Repo Dashboard Projects/OWNER/` on macOS and `%APPDATA%\Repo Dashboard Projects\OWNER\` on Windows, outside both your checkouts and the dashboard runtime. Reinstalling the dashboard preserves these records and the project launchers. While an install or update-app runs, the dashboard streams the install log live in the results list below the progress message.
 
 Updates stop when there are local changes, a conflicting destination, an unexpected origin, a detached branch, or a missing/mismatched upstream. The dashboard never force-pulls, resets, stashes, or deletes a checkout. Project install scripts can create or change files; those changes may need attention before the next update. If dependency setup fails after a successful Git update, the fetched code remains in place and setup can be retried. Status counts describe the repositories currently loaded into the dashboard. An update fetches before checking whether remote commits are available; a scan alone does not fetch every repository.
 
 For private repositories, configure **Git's own credentials** before cloning. If you use [GitHub CLI](https://cli.github.com/), run `gh auth login`, then `gh auth setup-git` in Terminal. Existing Git credential helpers also work. The browser's GitHub token is used for repository information and read-only chat; local clone/update actions use Git credentials and do not receive that browser token. Interactive Git credential prompts are disabled for dashboard operations, so resolve sign-in problems in Terminal first.
 
-To update the dashboard itself, download or pull the latest project and run `install-macos.command` again. The installer stages a replacement, waits for the launched service to stop safely, and preserves the previous installation if replacement fails. If a Git operation is still finishing, wait and rerun the installer. Your checkouts remain separate and are not removed.
+To update the dashboard itself, download or pull the latest project and run `install-macos.command` again on macOS. On Windows there is nothing to reinstall: pull the latest code and double-click `launch-dashboard.bat`. The macOS installer stages a replacement, waits for the launched service to stop safely, and preserves the previous installation if replacement fails. If a Git operation is still finishing, wait and rerun the installer. Your checkouts remain separate and are not removed.
 
 ### If an installation fails
 
 The result identifies the failed stage and, when recognized, its cause: for example a Node version requirement, a dependency conflict, a lockfile mismatch, a network problem, disk space, or folder permissions. The dashboard does not delete lockfiles, disable certificate checks, or force incompatible dependency versions to make a retry pass.
 
-For dependency failures, open the displayed `REPO.install.log`. Git command failures also write a `REPO.git.log` when the diagnostic folder is writable. In Finder, choose **Go → Go to Folder** and paste `~/Library/Application Support/Repo Dashboard Projects/OWNER/`, replacing `OWNER` with your GitHub name. On Windows the same logs are under `%APPDATA%\Repo Dashboard Projects\OWNER\`. Open the relevant log in TextEdit. Logs remain on your Mac with private file permissions and common credential formats redacted; inspect them for other sensitive output before sharing an excerpt.
+For dependency failures, open the displayed `REPO.install.log`. Git command failures also write a `REPO.git.log` when the diagnostic folder is writable. On macOS, in Finder choose **Go → Go to Folder** and paste `~/Library/Application Support/Repo Dashboard Projects/OWNER/`, replacing `OWNER` with your GitHub name. On Windows the same logs are under `%APPDATA%\Repo Dashboard Projects\OWNER\` — paste that path into Explorer's address bar. Logs remain on your computer with private file permissions and common credential formats redacted; inspect them for other sensitive output before sharing an excerpt.
 
 Include the final error lines when reporting an issue. A failed build is recorded separately from dependency installation, and the log includes the dashboard's Node version and processor. For comparison, these read-only Terminal commands show the versions in your current shell:
 
@@ -110,7 +122,7 @@ Use a launcher so the local command server starts with the dashboard:
 - macOS without installing an app: double-click `launch-dashboard.command`, or run `bash launch-dashboard.command`.
 - Any platform with Node.js: run `npm start`, then open [the local dashboard](http://127.0.0.1:8787).
 
-You can still open `index.html` directly for repository cards, but local install/update/launch controls and chat require the local server. Finder and Terminal shortcuts require macOS.
+You can still open `index.html` directly for repository cards, but local install/update/launch controls and chat require the local server. The folder and terminal shortcuts work on macOS and Windows.
 
 The macOS launcher keeps the server running when you close the browser. To stop it:
 
@@ -172,7 +184,7 @@ The server binds to `127.0.0.1`. Local repository routes require the dashboard's
 
 - No hosted backend or OAuth flow; GitHub dashboard access uses a personal access token.
 - No bundled Node.js or Git, Developer ID signature, or notarized installer.
-- Automatic app setup covers root-level Node.js `dev`/`start` projects and static `index.html` sites. Monorepo-specific setup, other languages, native app packaging, and external services may require manual steps.
+- Automatic app setup covers root-level Node.js `dev`/`start` projects, Godot `project.godot` projects, and static `index.html` sites. Monorepo-specific setup, other languages, native app packaging, and external services may require manual steps.
 - Dependency installation and project launch execute repository code on your Mac. A successful install means setup completed and a launcher was created; the project may still require its own configuration to run.
 - No team sharing.
 - Chat commands are read-only.

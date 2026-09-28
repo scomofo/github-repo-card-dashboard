@@ -11,6 +11,11 @@ async function fixture(t) {
       calls.push(input);
       if (input.fullName === 'owner/dirty') throw Object.assign(new Error('Save your local changes first.'), { statusCode: 409 });
       return { message: 'Cloned.' };
+    },
+    async readLog({ fullName }) {
+      calls.push({ log: fullName });
+      if (fullName === 'owner/missing') return { exists: false };
+      return { exists: true, truncated: false, log: 'npm install\ndone\n' };
     }
   } });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -93,4 +98,15 @@ test('existing read-only chat still works without an AI key', async (t) => {
   const response = await f.post('/chat', { message: 'overview', repos: [], githubToken: '' });
   assert.equal(response.status, 200);
   assert.match((await response.json()).text, /not loaded any repositories/);
+});
+
+test('install log tails are served to the local session only', async (t) => {
+  const f = await fixture(t);
+  const response = await f.post('/api/local/log', { fullName: 'owner/repo' });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { exists: true, truncated: false, log: 'npm install\ndone\n' });
+  const missing = await f.post('/api/local/log', { fullName: 'owner/missing' });
+  assert.deepEqual(await missing.json(), { exists: false });
+  const rejected = await f.post('/api/local/log', { fullName: 'owner/repo' }, { 'X-Repo-Dashboard-Token': 'bad' });
+  assert.equal(rejected.status, 403);
 });
