@@ -16,6 +16,11 @@ async function fixture(t) {
       calls.push({ log: fullName });
       if (fullName === 'owner/missing') return { exists: false };
       return { exists: true, truncated: false, log: 'npm install\ndone\n' };
+    },
+    async readIcon({ fullName }) {
+      calls.push({ icon: fullName });
+      if (fullName === 'owner/missing') return null;
+      return { bytes: Buffer.from('<svg></svg>'), contentType: 'image/svg+xml' };
     }
   } });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -98,6 +103,19 @@ test('existing read-only chat still works without an AI key', async (t) => {
   const response = await f.post('/chat', { message: 'overview', repos: [], githubToken: '' });
   assert.equal(response.status, 200);
   assert.match((await response.json()).text, /not loaded any repositories/);
+});
+
+test('project icons are served as binary to the local session only', async (t) => {
+  const f = await fixture(t);
+  const response = await f.post('/api/local/icon', { fullName: 'owner/repo' });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'image/svg+xml');
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(await response.text(), '<svg></svg>');
+  const missing = await f.post('/api/local/icon', { fullName: 'owner/missing' });
+  assert.equal(missing.status, 404);
+  const rejected = await f.post('/api/local/icon', { fullName: 'owner/repo' }, { 'X-Repo-Dashboard-Token': 'bad' });
+  assert.equal(rejected.status, 403);
 });
 
 test('install log tails are served to the local session only', async (t) => {

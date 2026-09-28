@@ -68,7 +68,7 @@ function harness(fetch, { protocol = 'http:' } = {}) {
     window: { matchMedia: () => ({ matches: false, addEventListener() {} }) },
     console, setTimeout, clearTimeout, setInterval, clearInterval
   });
-  vm.runInContext(`${script}\nglobalThis.dashboardTest = { state, els, bindEvents, handleCardActivation, handleCardDoubleClick, localPrimaryAction, runLocalAction, updateInstalledRepos, checkServer, renderLocalRepo, renderLocalPanel, readLocalStatus };`, context);
+  vm.runInContext(`${script}\nglobalThis.dashboardTest = { state, els, bindEvents, handleCardActivation, handleCardDoubleClick, localPrimaryAction, runLocalAction, updateInstalledRepos, checkServer, renderLocalRepo, renderLocalPanel, readLocalStatus, cardIcon };`, context);
   const api = context.dashboardTest;
   api.state.server = { checked: true, online: true, localRepos: true, projectInstall: true, csrfToken: 'local-session-secret', platform: 'darwin', openai: false, model: '' };
   api.state.local.gitAvailable = true;
@@ -158,6 +158,45 @@ test('double-click installs once across duplicate cards, while background clicks
   assert.equal(api.localPrimaryAction(ready), 'update-app');
   assert.equal(api.handleCardDoubleClick(cardEvent('scott/music', { interactive: true })), false);
   assert.equal(actions.length, 1);
+});
+
+test('repo cards show the project icon as a launch button when the app is ready', () => {
+  const api = harness(async () => response({}));
+  const ready = checkout('scott/music', 'ready', {
+    icon: true,
+    project: { kind: 'node', supported: true, ready: true, manager: 'npm', script: 'dev', launcherPath: '/Users/scott/Applications/Repo Apps/scott/music.command' }
+  });
+  api.setRepos([ready]);
+  const repo = { ...api.state.repos[0], name: 'music', avatar: 'https://avatars.example/u/1' };
+  const html = api.cardIcon(repo);
+  assert.match(html, /data-project-icon="scott\/music"/);
+  assert.match(html, /data-local-action="launch"/);
+  assert.match(html, /data-local-repo="scott\/music"/);
+  assert.match(html, /aria-label="Launch music"/);
+});
+
+test('repo cards fall back to the owner avatar without a project icon', () => {
+  const api = harness(async () => response({}));
+  const ready = checkout('scott/music', 'ready', {
+    project: { kind: 'node', supported: true, ready: true }
+  });
+  api.setRepos([ready]);
+  const repo = { ...api.state.repos[0], name: 'music', avatar: 'https://avatars.example/u/1' };
+  const html = api.cardIcon(repo);
+  assert.ok(!html.includes('data-project-icon'), 'no project icon requested');
+  assert.match(html, /avatars\.example\/u\/1/);
+});
+
+test('project icons without a ready app are not launch buttons', () => {
+  const api = harness(async () => response({}));
+  const cloned = checkout('scott/music', 'ready', {
+    icon: true, project: { kind: 'node', supported: true, ready: false }
+  });
+  api.setRepos([cloned]);
+  const repo = { ...api.state.repos[0], name: 'music' };
+  const html = api.cardIcon(repo);
+  assert.match(html, /data-project-icon="scott\/music"/);
+  assert.ok(!html.includes('data-local-action'), 'icon must not launch an unready app');
 });
 
 test('double-click updates a ready app and refreshes its dependency installation', async () => {

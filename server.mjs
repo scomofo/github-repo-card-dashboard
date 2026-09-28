@@ -39,6 +39,18 @@ export function createDashboardServer({ localManager = createLocalRepoManager() 
         } else if (request.url === '/api/local/log') {
           // Live tail of the install log while an install or update-app runs.
           sendJson(response, 200, await localManager.readLog({ fullName: body.fullName }));
+        } else if (request.url === '/api/local/icon') {
+          // The project's own app icon for its repo card. Binary response.
+          const icon = await localManager.readIcon({ fullName: body.fullName });
+          if (!icon) {
+            sendJson(response, 404, { error: 'This repository has no project icon.' });
+          } else {
+            response.writeHead(200, {
+              'Content-Type': icon.contentType, 'Content-Length': icon.bytes.length,
+              'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY'
+            });
+            response.end(icon.bytes);
+          }
         } else {
           sendJson(response, 404, { error: 'Unknown local repository endpoint.' });
         }
