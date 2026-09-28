@@ -15,7 +15,9 @@ function openBrowser(url) {
   }
   if (process.platform === 'win32') {
     // start's first quoted argument is the window title; the URL follows it.
-    const child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `start "" ${windowsQuote(url)}`], { stdio: 'ignore', shell: false, windowsHide: true });
+    // cmd.exe does not understand Node's default \" argument escaping, so pass
+    // the already-quoted command line through unchanged.
+    const child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `start "" ${windowsQuote(url)}`], { stdio: 'ignore', shell: false, windowsHide: true, windowsVerbatimArguments: true });
     child.on('error', () => console.log(`Open ${url} in your browser.`));
   }
 }
@@ -79,7 +81,12 @@ export async function launchProject(recordPath) {
   if (!['npm', 'pnpm', 'yarn', 'bun'].includes(saved.manager) || !path.isAbsolute(saved.managerPath) || !['dev', 'start'].includes(saved.script)) throw new Error('This app launcher needs to be installed again.');
   console.log(`Starting ${saved.fullName} with ${saved.manager} run ${saved.script}.\nKeep this Terminal window open. Press Control-C to stop.`);
   const { file: spawnFile, args: spawnArgs } = spawnTarget(saved.managerPath, ['run', saved.script]);
-  const child = spawn(spawnFile, spawnArgs, { cwd: saved.directory, shell: false, detached: process.platform !== 'win32',
+  // cmd.exe does not understand Node's default \" argument escaping: without
+  // this, the pre-quoted /c string is re-escaped and the executable resolves to
+  // a \\-prefixed UNC path ("The network path was not found."). runBounded
+  // already handles this; the launcher must too.
+  const windowsVerbatimArguments = process.platform === 'win32' && /(?:^|[\\/])cmd(?:\.exe)?$/i.test(spawnFile);
+  const child = spawn(spawnFile, spawnArgs, { cwd: saved.directory, shell: false, detached: process.platform !== 'win32', windowsVerbatimArguments,
     env: { ...process.env, NODE_ENV: 'development', HOST: '127.0.0.1', BROWSER: 'none' }, stdio: ['inherit', 'pipe', 'pipe'] });
   let opened = false;
   let buffer = '';
