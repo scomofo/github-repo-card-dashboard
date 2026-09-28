@@ -65,6 +65,38 @@ test('clones into owner/repo and safely fast-forwards; status never fetches', as
   assert.equal(await readFile(path.join(f.checkout, 'README.md'), 'utf8'), 'next version\n');
 });
 
+test('status reports the project icon when the checkout has a favicon', async (t) => {
+  const f = await fixture(t);
+  await f.clone();
+  assert.equal((await f.status()).icon, false);
+  await mkdir(path.join(f.checkout, 'public'), { recursive: true });
+  await writeFile(path.join(f.checkout, 'public', 'favicon.svg'), '<svg></svg>');
+  const entry = await f.status();
+  assert.equal(entry.icon, true);
+  const icon = await f.manager.readIcon({ fullName });
+  assert.equal(icon.contentType, 'image/svg+xml');
+  assert.equal(icon.bytes.toString(), '<svg></svg>');
+});
+
+test('project icons ignore symlinks and oversized files', async (t) => {
+  const f = await fixture(t);
+  await f.clone();
+  await writeFile(path.join(f.checkout, 'real.png'), 'icon-bytes');
+  await symlink(path.join(f.checkout, 'real.png'), path.join(f.checkout, 'favicon.png'));
+  assert.equal((await f.status()).icon, false, 'symlinked icons are never served');
+  assert.equal(await f.manager.readIcon({ fullName }), null);
+  await rm(path.join(f.checkout, 'favicon.png'));
+  await writeFile(path.join(f.checkout, 'favicon.png'), Buffer.alloc(600 * 1024, 'x'));
+  assert.equal((await f.status()).icon, false, 'oversized icons are skipped');
+  assert.equal(await f.manager.readIcon({ fullName }), null);
+});
+
+test('readIcon rejects invalid repository names and unknown checkouts', async (t) => {
+  const f = await fixture(t);
+  await assert.rejects(f.manager.readIcon({ fullName: '../evil' }), /owner\/name/);
+  await assert.rejects(f.manager.readIcon({ fullName: 'owner/missing' }), /Install this repository first/);
+});
+
 test('failed downloads retain the exact stage and write private diagnostics without sending raw output', async (t) => {
   const f = await fixture(t);
   await rm(f.remote, { recursive: true });

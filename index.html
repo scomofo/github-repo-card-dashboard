@@ -767,6 +767,19 @@
       border: 1px solid var(--border);
     }
 
+    .icon-launch {
+      padding: 0;
+      border: none;
+      background: none;
+      cursor: pointer;
+      border-radius: 8px;
+      line-height: 0;
+      flex: none;
+    }
+
+    .icon-launch:hover .avatar { border-color: var(--accent); }
+    .icon-launch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
     .card-name a {
       display: block;
       color: var(--text);
@@ -1373,7 +1386,7 @@
     <section id="localPanel" class="local-panel" aria-labelledby="localTitle">
       <div class="local-heading">
         <div>
-          <h2 id="localTitle">On this Mac</h2>
+          <h2 id="localTitle">On this computer</h2>
           <p>Double-click a repository card to install its app locally. Double-click an installed app to update it.</p>
         </div>
         <span id="localConnection" class="badge">Checking local manager…</span>
@@ -1415,7 +1428,7 @@
         <img src="./favicon.png" alt="">
         <div>
           <h2>Connect your GitHub repos</h2>
-          <p style="margin:0">See your GitHub projects, install supported apps on this Mac, and keep them up to date.</p>
+          <p style="margin:0">See your GitHub projects, install supported apps on this computer, and keep them up to date.</p>
         </div>
       </div>
       <div class="steps">
@@ -1434,7 +1447,7 @@
       <div class="notice">
         A remembered token is stored in this browser's <code>localStorage</code> for convenience on a personal machine.
         Use <strong>Forget token</strong> in the dashboard to remove it and the cached repo data at any time.
-        Repo data is loaded from GitHub. Local actions go to the manager on this Mac. Optional chat sends your question and repo context to the local server and, when configured, OpenAI.
+        Repo data is loaded from GitHub. Local actions go to the manager on this computer. Optional chat sends your question and repo context to the local server and, when configured, OpenAI.
       </div>
       <p>
         <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">Create a fine-grained token on GitHub</a>
@@ -1587,7 +1600,7 @@
 
     const QUICK_FILTERS = [
       { key: 'all', label: 'All', test: () => true },
-      { key: 'installed', label: 'On this Mac', test: (repo) => Boolean(state.local.repos.get(repo.fullName)?.installed) },
+      { key: 'installed', label: 'On this computer', test: (repo) => Boolean(state.local.repos.get(repo.fullName)?.installed) },
       { key: 'attention', label: 'Needs attention', tone: 'warn', test: (repo) => repo.attention.score > 0 },
       { key: 'failing', label: 'Failing CI', tone: 'danger', test: (repo) => repo.workflow.status === 'failure' },
       { key: 'review', label: 'Review needed', tone: 'warn', test: (repo) => repo.reviewNeeded > 0 },
@@ -1632,7 +1645,7 @@
       fromCache: false,
       drawerRepo: null,
       server: { checked: false, online: false, openai: false, model: '', localRepos: false, projectInstall: false, csrfToken: '', platform: '' },
-      local: { root: '', gitAvailable: false, repos: new Map(), scanning: false, scanned: false, pending: new Set(), bulk: false }
+      local: { root: '', gitAvailable: false, repos: new Map(), scanning: false, scanned: false, pending: new Set(), bulk: false, iconUrls: new Map() }
     };
 
     const els = {};
@@ -2439,6 +2452,44 @@
 
     function renderGrid(container, repos, attentionGrid) {
       container.innerHTML = repos.map((repo) => renderCard(repo, attentionGrid)).join('');
+      hydrateProjectIcons(container);
+    }
+
+    // The project's own app icon when the local checkout has one; tapping it
+    // launches the installed app. Falls back to the owner avatar otherwise.
+    function cardIcon(repo) {
+      const local = state.local.repos.get(repo.fullName);
+      if (!local?.icon) {
+        return repo.avatar ? `<img class="avatar" src="${escapeAttr(avatarUrl(repo.avatar, 64))}" alt="" loading="lazy">` : '<span class="avatar"></span>';
+      }
+      const url = state.local.iconUrls.get(repo.fullName);
+      const fallback = repo.avatar ? ` src="${escapeAttr(avatarUrl(repo.avatar, 64))}"` : '';
+      const img = `<img class="avatar" data-project-icon="${escapeAttr(repo.fullName)}"${url ? ` src="${escapeAttr(url)}"` : fallback} alt="" loading="lazy">`;
+      if (!canLaunchLocal(local)) return img;
+      return `<button type="button" class="icon-launch" data-local-action="launch" data-local-repo="${escapeAttr(repo.fullName)}" title="Launch ${escapeAttr(repo.name)}" aria-label="Launch ${escapeAttr(repo.name)}">${img}</button>`;
+    }
+
+    // Fill in project icons after render. Fetches are cached per session; a
+    // failed fetch keeps the owner-avatar fallback already in place.
+    async function hydrateProjectIcons(container) {
+      if (!localManagerReady()) return;
+      const imgs = container.querySelectorAll?.('img[data-project-icon]') ?? [];
+      for (const img of imgs) {
+        const fullName = img.dataset.projectIcon;
+        img.removeAttribute('data-project-icon');
+        if (state.local.iconUrls.has(fullName)) { img.src = state.local.iconUrls.get(fullName); continue; }
+        try {
+          const response = await fetch('/api/local/icon', {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            headers: { 'Content-Type': 'application/json', 'X-Repo-Dashboard-Token': state.server.csrfToken },
+            body: JSON.stringify({ fullName })
+          });
+          if (!response.ok) continue;
+          const url = URL.createObjectURL(await response.blob());
+          state.local.iconUrls.set(fullName, url);
+          img.src = url;
+        } catch { /* The fallback avatar stays; the card remains usable. */ }
+      }
     }
 
     function renderCard(repo, attentionGrid) {
@@ -2454,7 +2505,7 @@
           <div class="card-main">
             <div class="card-title">
               <div class="card-name">
-                ${repo.avatar ? `<img class="avatar" src="${escapeAttr(avatarUrl(repo.avatar, 64))}" alt="" loading="lazy">` : '<span class="avatar"></span>'}
+                ${cardIcon(repo)}
                 <div>
                   <small>${escapeHtml(repo.owner)}</small>
                   <a href="${escapeAttr(repo.url)}" target="_blank" rel="noreferrer">${escapeHtml(repo.name)}</a>
@@ -2567,7 +2618,7 @@
       ].filter(Boolean).join('');
 
       els.drawerHead.innerHTML = `
-        ${repo.avatar ? `<img class="avatar" src="${escapeAttr(avatarUrl(repo.avatar, 96))}" alt="">` : '<span class="avatar"></span>'}
+        ${cardIcon(repo)}
         <div style="min-width:0;flex:1">
           <h2><a href="${escapeAttr(repo.url)}" target="_blank" rel="noreferrer">${escapeHtml(repo.owner)}/<wbr>${escapeHtml(repo.name)}</a></h2>
           <p>${escapeHtml(repo.description || 'No description.')}</p>
@@ -2577,7 +2628,7 @@
       `;
 
       const sections = [];
-      sections.push(`<div class="drawer-section"><h4>On this Mac</h4><div data-local-view="${escapeAttr(repo.fullName)}" data-local-detail="true">${renderLocalRepo(repo.fullName, true)}</div></div>`);
+      sections.push(`<div class="drawer-section"><h4>On this computer</h4><div data-local-view="${escapeAttr(repo.fullName)}" data-local-detail="true">${renderLocalRepo(repo.fullName, true)}</div></div>`);
 
       if (repo.attention.reasons.length) {
         sections.push(`
@@ -2749,6 +2800,10 @@
       return canInstallLocal(repo) ? 'install' : null;
     }
 
+    function canLaunchLocal(local) {
+      return ['darwin', 'win32'].includes(state.server.platform) && local?.installed && local.state !== 'blocked' && local.project?.ready;
+    }
+
     function gitMissingHint() {
       return state.server.platform === 'win32'
         ? 'Git is unavailable. Install Git for Windows (https://git-scm.com/download/win), reopen Repo Dashboard, then scan again.'
@@ -2913,7 +2968,7 @@
       const local = state.local.repos.get(fullName);
       if (action === 'clone' && local?.state !== 'not-installed' || ['update', 'update-app'].includes(action) && !canUpdateLocal(local)) return false;
       if (action === 'install' && !canInstallLocal(local)) return false;
-      if (action === 'launch' && !(['darwin', 'win32'].includes(state.server.platform) && local?.installed && local.state !== 'blocked' && local.project?.ready)) return false;
+      if (action === 'launch' && !canLaunchLocal(local)) return false;
       state.local.pending.add(fullName);
       const actionVerb = { clone: 'Downloading source for', update: 'Updating source for', install: 'Installing app and dependencies for', 'update-app': 'Updating app and dependencies for', launch: 'Launching' }[action] || 'Opening';
       if (!bulk) els.localProgress.textContent = `${actionVerb} ${fullName}… Keep this window open until the result appears.`;

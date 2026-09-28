@@ -8,6 +8,17 @@ import { writeDiagnosticLog } from './diagnostics.mjs';
 import { dashboardProjectsRoot, isWindowsReservedName } from './platformPaths.mjs';
 const ACTIONS = new Set(['clone', 'update', 'open', 'terminal', 'install', 'update-app', 'launch']);
 const LOG_TAIL_BYTES = 64 * 1024;
+// Conventional favicon/logo locations, checked in order. SVG first: it scales
+// cleanly to card size. Only these relative paths are ever served as icons.
+const ICON_CANDIDATES = [
+  'public/favicon.svg', 'public/favicon.png', 'public/favicon.ico',
+  'favicon.svg', 'favicon.png', 'favicon.ico',
+  'public/icon.svg', 'public/icon.png', 'icon.svg', 'icon.png',
+  'public/logo.svg', 'public/logo.png', 'logo.svg', 'logo.png',
+  'public/apple-touch-icon.png', 'apple-touch-icon.png'
+];
+const ICON_CONTENT_TYPES = { '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const ICON_MAX_BYTES = 512 * 1024;
 
 function execBounded(file, args, options) {
   return new Promise((resolve, reject) => {
@@ -295,12 +306,28 @@ export function createLocalRepoManager({
     return directory;
   }
 
+  /** Project's own app icon: the first favicon/logo candidate that is a real,
+   * reasonably-sized file. Symlinks are never followed. */
+  async function findProjectIcon(directory) {
+    for (const candidate of ICON_CANDIDATES) {
+      const file = path.join(directory, candidate);
+      try {
+        const info = await lstat(file);
+        if (!info.isFile() || info.isSymbolicLink()) continue;
+        if (info.size === 0 || info.size > ICON_MAX_BYTES) continue;
+        return candidate;
+      } catch { /* Try the next candidate. */ }
+    }
+    return null;
+  }
+
   async function inspect(fullName) {
-    const base = { fullName, path: repoPath(fullName), installed: false, state: 'not-installed', branch: null, dirty: false, ahead: 0, behind: 0, project: null, message: 'Source has not been downloaded to this computer.' };
+    const base = { fullName, path: repoPath(fullName), installed: false, state: 'not-installed', branch: null, dirty: false, ahead: 0, behind: 0, project: null, icon: false, message: 'Source has not been downloaded to this computer.' };
     try {
       if (!await locationExists(fullName)) return base;
       base.installed = true;
       const directory = await verifyRepository(fullName);
+      base.icon = (await findProjectIcon(directory)) !== null;
       try { base.project = await projectInstaller.describe({ directory, fullName }); }
       catch (error) {
         base.project = { kind: 'unsupported', supported: false, ready: false,
@@ -515,5 +542,17 @@ export function createLocalRepoManager({
     return { exists: true, truncated, log: truncated ? content.slice(-LOG_TAIL_BYTES) : content };
   }
 
-  return { status, runAction, readLog };
+  /** Project icon bytes for a repo card. Only allowlisted favicon/logo candidates
+   * inside the verified checkout are served; no caller-supplied paths. */
+  async function readIcon({ fullName } = {}) {
+    validateFullName(fullName);
+    const directory = await verifyRepository(fullName);
+    const candidate = await findProjectIcon(directory);
+    if (!candidate) return null;
+    const bytes = await readFile(path.join(directory, candidate));
+    if (bytes.length === 0 || bytes.length > ICON_MAX_BYTES) return null;
+    return { bytes, contentType: ICON_CONTENT_TYPES[path.extname(candidate)] };
+  }
+
+  return { status, runAction, readLog, readIcon };
 }
