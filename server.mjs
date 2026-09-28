@@ -36,6 +36,9 @@ export function createDashboardServer({ localManager = createLocalRepoManager() 
         } else if (request.url === '/api/local/action') {
           // Only these fields cross into Git; browser credentials are never forwarded.
           sendJson(response, 200, await localManager.runAction({ fullName: body.fullName, action: body.action }));
+        } else if (request.url === '/api/local/log') {
+          // Live tail of the install log while an install or update-app runs.
+          sendJson(response, 200, await localManager.readLog({ fullName: body.fullName }));
         } else {
           sendJson(response, 404, { error: 'Unknown local repository endpoint.' });
         }

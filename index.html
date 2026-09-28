@@ -1288,6 +1288,10 @@
     .local-results:empty { display: none; }
     .local-results .error { color: var(--danger); }
     .local-results .success { color: var(--ok); }
+    .local-live-log { max-height: 180px; overflow-y: auto; margin: 6px 0 0; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--panel-soft); color: var(--text);
+      font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap; overflow-wrap: anywhere; }
     .local-repo { padding: 12px 14px; background: var(--panel-soft); border-top: 1px solid var(--border); }
     .local-state-row { gap: 7px; margin-bottom: 9px; font-size: 12px; color: var(--muted); }
     .local-buttons { gap: 7px; }
@@ -1393,8 +1397,8 @@
       </div>
       <details class="local-help">
         <summary>How local app installation works</summary>
-        <p><strong>Install locally</strong> downloads the source, installs dependencies, and creates a double-clickable launcher in <code>~/Applications/Repo Apps</code>.
-          Automatic setup supports Node projects with a <code>dev</code> or <code>start</code> script and plain HTML sites. Other projects are downloaded with a message explaining that manual setup is needed.</p>
+        <p><strong>Install locally</strong> downloads the source, installs dependencies, and creates a double-clickable launcher in <code>~/Applications/Repo Apps</code> (macOS) or <code>%APPDATA%\Repo Dashboard Apps</code> (Windows).
+          Automatic setup supports Node projects with a <code>dev</code> or <code>start</code> script, Godot projects (the launcher opens the Godot editor), and plain HTML sites. Other projects are downloaded with a message explaining that manual setup is needed.</p>
         <p>Installing or updating runs the project's package scripts on your Mac. Choose repositories you trust.
           Use <strong>Launch app</strong> to run an installed app. For details and source-only actions, choose <strong>Details</strong>.</p>
         <p><strong>Scan local status</strong> checks files on your Mac using the last fetched Git information.
@@ -2745,6 +2749,12 @@
       return canInstallLocal(repo) ? 'install' : null;
     }
 
+    function gitMissingHint() {
+      return state.server.platform === 'win32'
+        ? 'Git is unavailable. Install Git for Windows (https://git-scm.com/download/win), reopen Repo Dashboard, then scan again.'
+        : 'Git is unavailable. Open Terminal, run xcode-select --install, then scan again.';
+    }
+
     function renderLocalPanel() {
       const available = localManagerReady();
       const busy = state.local.scanning || state.local.bulk || state.local.pending.size > 0;
@@ -2768,9 +2778,9 @@
       els.localReconnect.disabled = busy;
       els.forgetButton.disabled = busy;
       els.localLauncher.classList.toggle('hidden', available || !state.server.checked);
-      els.localHint.textContent = !available ? 'Start the local manager to install, update, and launch apps on this Mac.'
+      els.localHint.textContent = !available ? 'Start the local manager to install, update, and launch apps on this computer.'
         : !state.server.projectInstall ? 'Restart or reinstall Repo Dashboard to enable app installation. Source-only actions remain available in Details.'
-        : !state.local.gitAvailable && state.local.scanned ? 'Git is unavailable. Open Terminal, run xcode-select --install, then scan again.'
+        : !state.local.gitAvailable && state.local.scanned ? gitMissingHint()
         : !state.repos.length ? 'Connect GitHub below, then double-click a card to install a local app.'
         : !state.local.scanned ? 'Scanning your repository folder…'
         : `${apps.length} apps ready · ${installed.length} repositories downloaded. Double-click to install or update; local edits are preserved. Install and Update app run the project's package scripts.`;
@@ -2794,7 +2804,8 @@
       const allowed = Boolean(action);
       const actionLabel = pending ? 'Working…' : action === 'update-app' ? 'Update app' : action === 'launch' ? 'Launch app' : 'Install locally';
       const button = (actionName, text, enabled, primary = false) => `<button type="button" ${primary ? 'class="primary"' : ''} data-local-action="${actionName}" data-local-repo="${escapeAttr(fullName)}" ${enabled ? '' : 'disabled'} aria-label="${escapeAttr(`${text}: ${fullName}`)}">${text}</button>`;
-      const canOpen = available && state.server.platform === 'darwin' && repo?.installed && repo.state !== 'blocked' && !busy;
+      const canOpen = available && ['darwin', 'win32'].includes(state.server.platform) && repo?.installed && repo.state !== 'blocked' && !busy;
+      const openerLabels = state.server.platform === 'win32' ? ['Explorer', 'Command Prompt'] : ['Finder', 'Terminal'];
       const canLaunch = available && ['darwin', 'win32'].includes(state.server.platform) && repo?.installed && repo.state !== 'blocked' && state.server.projectInstall && repo.project?.ready && !busy;
       const appMessage = repo?.project?.message || (repo?.installed && !repo.project?.ready ? 'Source is downloaded. App setup has not completed.' : '');
       return `<div class="local-repo">
@@ -2809,7 +2820,7 @@
         <div class="local-buttons">
           ${button(action || 'install', actionLabel, action === 'launch' ? canLaunch : canManageApp && allowed, true)}
           ${repo?.project?.ready && action !== 'launch' ? button('launch', 'Launch app', canLaunch) : ''}
-          ${repo?.installed ? `${button('open', 'Finder', canOpen)}${button('terminal', 'Terminal', canOpen)}` : ''}
+          ${repo?.installed ? `${button('open', openerLabels[0], canOpen)}${button('terminal', openerLabels[1], canOpen)}` : ''}
           ${detail ? button(repo?.installed ? 'update' : 'clone', repo?.installed ? 'Update source only' : 'Download source only', canAct && (repo?.installed ? canUpdateLocal(repo) : repo?.state === 'not-installed')) : ''}
         </div>
         ${repo?.project?.ready && !canUpdateLocal(repo) ? '<p class="local-note">Launch uses your current checkout. Resolve local changes or branch history before updating.</p>' : ''}
@@ -2832,6 +2843,7 @@
       els.localResults.appendChild(item);
       while (els.localResults.children.length > 100) els.localResults.firstElementChild.remove();
       els.localResults.scrollTop = els.localResults.scrollHeight;
+      return item;
     }
 
     async function localRequest(endpoint, payload) {
@@ -2907,6 +2919,29 @@
       if (!bulk) els.localProgress.textContent = `${actionVerb} ${fullName}… Keep this window open until the result appears.`;
       renderLocalViews();
       let success = false;
+      // Stream the install log while a long install or update-app runs. The log
+      // view appears once the server has written the first output.
+      let logTimer = null;
+      let logView = null;
+      const pollLog = async () => {
+        if (!localManagerReady()) return;
+        try {
+          const logBody = await localRequest('/api/local/log', { fullName });
+          if (!logBody.exists) return;
+          if (!logView) {
+            const item = localResult(fullName, 'Live install output:');
+            logView = document.createElement('pre');
+            logView.className = 'local-live-log';
+            item.appendChild(logView);
+          }
+          logView.textContent = logBody.log;
+          logView.scrollTop = logView.scrollHeight;
+        } catch { /* Keep the last output; the action result below reports failures. */ }
+      };
+      if (!bulk && ['install', 'update-app'].includes(action)) {
+        logTimer = setInterval(pollLog, 2000);
+        pollLog(); // First paint as soon as possible; never delays the action itself.
+      }
       try {
         const body = await localRequest('/api/local/action', { fullName, action });
         if (body.repo) state.local.repos.set(fullName, body.repo);
@@ -2915,6 +2950,7 @@
       } catch (error) {
         localResult(fullName, error.message, false);
       } finally {
+        if (logTimer) { clearInterval(logTimer); logTimer = null; await pollLog(); }
         if (localManagerReady() && ['clone', 'update', 'install', 'update-app'].includes(action)) {
           try { await readLocalStatus([fullName]); }
           catch (error) { localResult(fullName, `Could not refresh local status: ${error.message}`, false); }

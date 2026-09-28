@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { classifyPackageFailure, redactDiagnostics, writeDiagnosticLog } from '../src/diagnostics.mjs';
+import { classifyPackageFailure, redactDiagnostics, appendDiagnosticLog, writeDiagnosticLog } from '../src/diagnostics.mjs';
 
 test('diagnostics redact common credentials while retaining useful failure details', () => {
   const text = redactDiagnostics('fatal: unable to access https://someone:private-value@github.com/owner/repo: certificate failure\nAuthorization: Bearer secret-header\nNPM_TOKEN=secret-env\n//registry.example/:_authToken=secret-npm\ngithub_pat_synthetic_token\nhttps://example.invalid/?access_token=secret-query\n');
@@ -59,4 +59,24 @@ test('package errors distinguish engine, lock, network, permissions, and build f
   assert.equal(classifyPackageFailure({ output: 'compiler: unknown syntax', code: 1 }, { stage: 'build' }).reason, 'BUILD_FAILED');
   assert.equal(classifyPackageFailure({ output: 'npm error code 1\nCannot find specified certificateFile signing.p12', code: 1 }, { stage: 'build' }).reason, 'BUILD_FAILED');
   assert.equal(classifyPackageFailure({ output: 'npm error code SELF_SIGNED_CERT_IN_CHAIN', code: 1 }).reason, 'TLS');
+});
+
+test('diagnostic logs append redacted output for live progress and stay bounded', async (t) => {
+  const temp = await mkdtemp(path.join(tmpdir(), 'repo-diagnostics-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const root = path.join(temp, 'logs');
+  const input = { root, fullName: 'owner/repo', kind: 'install', content: 'npm install\n' };
+  await appendDiagnosticLog(input);
+  await appendDiagnosticLog({ ...input, content: 'NPM_TOKEN=secret-value\n' });
+  const file = path.join(root, 'owner', 'repo.install.log');
+  const text = await readFile(file, 'utf8');
+  assert.ok(text.includes('npm install'));
+  assert.ok(!text.includes('secret-value'));
+  await appendDiagnosticLog({ ...input, content: 'x'.repeat(2 * 1024 * 1024) });
+  await appendDiagnosticLog({ ...input, content: 'tail-marker\n' });
+  const finished = await readFile(file, 'utf8');
+  assert.ok(finished.length <= 2 * 1024 * 1024 + 64);
+  assert.ok(finished.endsWith('tail-marker\n'));
+  await assert.rejects(appendDiagnosticLog({ ...input, fullName: 'owner/../evil' }), /Invalid diagnostic/);
+  await assert.rejects(appendDiagnosticLog({ ...input, kind: 'chat' }), /Invalid diagnostic/);
 });

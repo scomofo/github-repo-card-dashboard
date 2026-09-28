@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
-import { classifyLocalRepoFailure, createLocalRepoManager, validateFullName } from '../src/localRepos.mjs';
+import { classifyLocalRepoFailure, createLocalRepoManager, desktopTarget, validateFullName } from '../src/localRepos.mjs';
 
 const exec = promisify(execFile);
 const fullName = 'owner/demo';
@@ -445,4 +445,33 @@ test('repository names reject Windows reserved device names on every platform', 
   }
   assert.equal(validateFullName('owner/demo'), 'owner/demo');
   assert.equal(validateFullName('owner/console'), 'owner/console');
+});
+
+test('folder and terminal openers are platform specific', () => {
+  assert.deepEqual(desktopTarget('open', '/tmp/repo', 'darwin'), { file: '/usr/bin/open', args: ['/tmp/repo'] });
+  assert.deepEqual(desktopTarget('terminal', '/tmp/repo', 'darwin'), { file: '/usr/bin/open', args: ['-a', 'Terminal', '/tmp/repo'] });
+  assert.deepEqual(desktopTarget('open', 'C:\\repo', 'win32'), { file: 'explorer.exe', args: ['C:\\repo'] });
+  assert.deepEqual(desktopTarget('terminal', 'C:\\repo', 'win32'),
+    { file: 'cmd.exe', args: ['/d', '/s', '/c', 'start', '', '/d', 'C:\\repo', 'cmd', '/k'] });
+  assert.equal(desktopTarget('open', '/tmp/repo', 'linux'), null);
+  assert.equal(desktopTarget('bogus', '/tmp/repo', 'darwin'), null);
+});
+
+test('install log tails stream while invalid repository names are rejected', async (t) => {
+  const f = await fixture(t);
+  assert.deepEqual(await f.manager.readLog({ fullName }), { exists: false });
+  const dir = path.join(f.options.diagnosticsRoot, 'owner');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, 'demo.install.log'), 'line\n'.repeat(20000));
+  const tail = await f.manager.readLog({ fullName });
+  assert.equal(tail.exists, true);
+  assert.equal(tail.truncated, true);
+  assert.ok(tail.log.length <= 64 * 1024);
+  assert.ok(tail.log.endsWith('line\n'));
+  const short = await f.manager.readLog({ fullName: 'owner/short' }).catch(() => null);
+  assert.equal(short.exists, false);
+  await writeFile(path.join(dir, 'short.install.log'), 'hello\n');
+  assert.deepEqual(await f.manager.readLog({ fullName: 'owner/short' }), { exists: true, truncated: false, log: 'hello\n' });
+  await assert.rejects(f.manager.readLog({ fullName: 'owner/../evil' }), /owner\/name/);
+  await assert.rejects(f.manager.readLog({}), /owner\/name/);
 });
