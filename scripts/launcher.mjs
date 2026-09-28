@@ -96,7 +96,7 @@ async function start() {
   if (saved && alive(saved.pid)) {
     throw new Error(`Repo Dashboard is still starting or stopping. Wait a moment and try again. Log: ${logPath}`);
   }
-  const git = spawnSync('git', ['--version'], { encoding: 'utf8', timeout: 10_000 });
+  const git = spawnSync('git', ['--version'], { encoding: 'utf8', timeout: 10_000, shell: process.platform === 'win32' });
   if (git.status !== 0) {
     throw new Error('Git is required. Open Terminal and run xcode-select --install, complete the Command Line Tools installation, then open Repo Dashboard again.');
   }
