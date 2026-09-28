@@ -135,7 +135,9 @@ export function spawnTarget(file, args, platform = process.platform) {
 export async function findManagerPath(manager, { env = process.env, platform = process.platform } = {}) {
   const names = platform === 'win32' ? [`${manager}.cmd`, `${manager}.bat`, `${manager}.exe`, manager] : [manager];
   const mode = platform === 'win32' ? constants.F_OK : constants.X_OK;
-  for (const folder of (env.PATH || '').split(path.delimiter).filter((part) => path.isAbsolute(part))) {
+  // Windows names the variable "Path"; a copied env object is case-sensitive.
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
+  for (const folder of (env[pathKey] || '').split(path.delimiter).filter((part) => path.isAbsolute(part))) {
     for (const name of names) {
       const candidate = path.join(folder, name);
       try { await access(candidate, mode); return candidate; } catch { /* Try the next candidate. */ }
@@ -167,7 +169,10 @@ function runBounded(file, args, { cwd, env, timeoutMs, platform = process.platfo
     let settled = false;
     let failure;
     const { file: spawnFile, args: spawnArgs } = spawnTarget(file, args, platform);
-    const child = spawn(spawnFile, spawnArgs, { cwd, env, shell: false, detached: platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    // cmd.exe does not understand Node's default \" argument escaping; pass the
+    // already-quoted command line through unchanged.
+    const windowsVerbatimArguments = platform === 'win32' && /(?:^|[\\/])cmd(?:\.exe)?$/i.test(spawnFile);
+    const child = spawn(spawnFile, spawnArgs, { cwd, env, shell: false, windowsVerbatimArguments, detached: platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     const kill = () => {
       try { if (platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); }
       catch { try { child.kill('SIGKILL'); } catch { /* Process already exited. */ } }
