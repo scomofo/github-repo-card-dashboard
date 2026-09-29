@@ -78,6 +78,16 @@ test('status reports the project icon when the checkout has a favicon', async (t
   assert.equal(icon.bytes.toString(), '<svg></svg>');
 });
 
+test('status reports the project icon when the checkout has an app-icon.png', async (t) => {
+  const f = await fixture(t);
+  await f.clone();
+  await writeFile(path.join(f.checkout, 'app-icon.png'), 'app-icon-bytes');
+  assert.equal((await f.status()).icon, true);
+  const icon = await f.manager.readIcon({ fullName });
+  assert.equal(icon.contentType, 'image/png');
+  assert.equal(icon.bytes.toString(), 'app-icon-bytes');
+});
+
 test('project icons ignore symlinks and oversized files', async (t) => {
   const f = await fixture(t);
   await f.clone();
