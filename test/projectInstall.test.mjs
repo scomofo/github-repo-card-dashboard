@@ -7,11 +7,30 @@ import http from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
-import { buildGodotLauncher, buildLauncher, createProjectInstaller, findManagerPath, inspectProject, windowsQuote } from '../src/projectInstall.mjs';
+import { buildGodotLauncher, buildLauncher, createProjectInstaller, findManagerPath, inspectProject, spawnTarget, windowsQuote } from '../src/projectInstall.mjs';
 import { loopbackUrl, serveStaticProject } from '../scripts/project-launcher.mjs';
 
 const exec = promisify(execFile);
 const fullName = 'owner/demo';
+
+async function execute(file, args = [], options = {}) {
+  const target = spawnTarget(file, args);
+  return exec(target.file, target.args, {
+    ...options,
+    windowsVerbatimArguments: process.platform === 'win32' && /(?:^|[\\/])cmd(?:\.exe)?$/i.test(target.file),
+  });
+}
+
+async function executeLauncher(file, options = {}) {
+  return process.platform === 'win32' ? execute(file, [], options) : execute('bash', [file], options);
+}
+
+function withPath(env, value) {
+  const result = { ...env };
+  for (const key of Object.keys(result)) if (key.toUpperCase() === 'PATH') delete result[key];
+  result[process.platform === 'win32' ? 'Path' : 'PATH'] = value;
+  return result;
+}
 
 async function fixture(t, manifest, options = {}) {
   const temp = await mkdtemp(path.join(tmpdir(), "repo-app-'quoted-space-"));
@@ -42,11 +61,11 @@ test('npm setup runs lifecycle scripts, creates a runnable launcher, and leaves 
   const result = await f.install();
   assert.equal(result.ready, true);
   assert.equal(await readFile(path.join(f.temp, 'setup-ran'), 'utf8'), 'yes');
-  assert.ok((await stat(result.launcherPath)).mode & 0o100);
+  if (process.platform !== 'win32') assert.ok((await stat(result.launcherPath)).mode & 0o100);
   assert.equal(await readFile(path.join(f.directory, 'package.json'), 'utf8'), JSON.stringify(manifest));
   await assert.rejects(readFile(path.join(f.directory, 'package-lock.json')), { code: 'ENOENT' });
   assert.ok(result.launcherPath.startsWith(f.launchersRoot));
-  await exec('bash', [result.launcherPath], { env: f.env });
+  await executeLauncher(result.launcherPath, { env: f.env });
   assert.equal(await readFile(path.join(f.temp, 'app-ran'), 'utf8'), 'yes');
   assert.equal((await f.installer.launch(f.input)).ready, true);
 });
@@ -55,7 +74,8 @@ test('locked npm projects use ci without rewriting the lock; start-only projects
   const f = await fixture(t, { name: 'local-app', version: '1.0.0', scripts: { start: 'node app.cjs', build: 'node build.cjs' } });
   await writeFile(path.join(f.directory, 'build.cjs'), "require('node:fs').writeFileSync(require('node:path').join(process.env.APP_TEST_ROOT, 'built'), 'yes')");
   await writeFile(path.join(f.directory, 'app.cjs'), "if (require('node:fs').readFileSync(require('node:path').join(process.env.APP_TEST_ROOT, 'built'), 'utf8') !== 'yes') process.exit(1)");
-  await exec('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: f.directory });
+  const npm = await findManagerPath('npm');
+  await execute(npm, ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: f.directory });
   const original = await readFile(path.join(f.directory, 'package-lock.json'), 'utf8');
   const result = await f.install();
   assert.equal(result.ready, true);
@@ -64,7 +84,7 @@ test('locked npm projects use ci without rewriting the lock; start-only projects
   const log = await readFile(path.join(f.stateRoot, 'owner/demo.install.log'), 'utf8');
   assert.match(log, /^npm ci /);
   assert.match(log, /npm run build/);
-  await exec('bash', [result.launcherPath], { env: f.env });
+  await executeLauncher(result.launcherPath, { env: f.env });
 });
 
 test('Electron source apps install and launch without running a Windows packaging build', async (t) => {
@@ -83,7 +103,7 @@ test('Electron source apps install and launch without running a Windows packagin
   const result = await f.install();
   assert.equal(result.ready, true);
   await assert.rejects(readFile(path.join(f.temp, 'packaging-ran')), { code: 'ENOENT' });
-  await exec('bash', [result.launcherPath], { env: f.env });
+  await executeLauncher(result.launcherPath, { env: f.env });
   assert.equal(await readFile(path.join(f.temp, 'electron-started'), 'utf8'), 'yes');
   await f.writeManifest({ ...manifest, scripts: { ...manifest.scripts, build: 'vite build && electron-builder --win' } });
   assert.equal((await inspectProject(f.input)).needsBuild, true, 'source compilation before packaging remains required');
@@ -143,8 +163,8 @@ test('manifest changes and removed dependencies require a fresh install', async 
   assert.equal((await f.install()).ready, true);
   await f.writeManifest({ name: 'local-app', version: '2.0.0', scripts: { dev: 'node changed.cjs' } });
   assert.equal((await f.describe()).ready, false);
-  const oldLauncher = path.join(f.launchersRoot, 'owner/demo.command');
-  await assert.rejects(exec('bash', [oldLauncher], { env: f.env }), /Project setup has changed/);
+  const oldLauncher = path.join(f.launchersRoot, 'owner', `demo${process.platform === 'win32' ? '.bat' : '.command'}`);
+  await assert.rejects(executeLauncher(oldLauncher, { env: f.env }), /Project setup has changed/);
 });
 
 test('unsupported and ambiguous projects never claim an installed app', async (t) => {
@@ -166,7 +186,7 @@ test('build-free HTML with a tests-only package installs without its development
   const manifest = { name: 'impact-sim-fixture', type: 'module', private: true,
     scripts: { test: 'node --test tests/*.test.js', check: 'node --check js/app.js' },
     devDependencies: { jsdom: '30.0.1' }, engines: { node: '>=999' } };
-  const f = await fixture(t, manifest, { env: { PATH: '/no-package-manager', REPO_DASHBOARD_NO_OPEN: '1' } });
+  const f = await fixture(t, manifest, { env: withPath(process.env, '/no-package-manager') });
   const html = '<!DOCTYPE html><h1>Native browser app</h1><script type="module" src="js/app.js"></script>';
   await writeFile(path.join(f.directory, 'index.html'), html);
   await mkdir(path.join(f.directory, 'js'));
@@ -176,7 +196,7 @@ test('build-free HTML with a tests-only package installs without its development
   const result = await f.install();
   assert.equal(result.kind, 'static');
   assert.equal(result.ready, true);
-  assert.ok((await stat(result.launcherPath)).mode & 0o100);
+  if (process.platform !== 'win32') assert.ok((await stat(result.launcherPath)).mode & 0o100);
   await assert.rejects(stat(path.join(f.directory, 'node_modules')), { code: 'ENOENT' });
   await assert.rejects(stat(path.join(f.stateRoot, 'owner/demo.install.log')), { code: 'ENOENT' });
   assert.equal(await readFile(path.join(f.directory, 'package-lock.json'), 'utf8'), lock);
@@ -219,7 +239,7 @@ test('HTML fallback refuses build/lifecycle scripts, runtime dependencies, works
 });
 
 test('missing package manager gives a retryable setup error without installing a global tool', async (t) => {
-  const f = await fixture(t, { packageManager: 'pnpm@10.0.0', scripts: { dev: 'node app.js' } }, { env: { PATH: '/not-a-real-package-manager-folder', REPO_DASHBOARD_NO_OPEN: '1' } });
+  const f = await fixture(t, { packageManager: 'pnpm@10.0.0', scripts: { dev: 'node app.js' } }, { env: withPath(process.env, '/not-a-real-package-manager-folder') });
   await assert.rejects(f.install(), (error) => error.statusCode === 503 && /pnpm is required/.test(error.message));
   assert.equal((await f.describe()).ready, false);
 });
@@ -238,7 +258,7 @@ test('setup refuses symlink/file node_modules and unrelated empty launcher files
   assert.equal((await f.install()).ready, false);
   await rm(path.join(f.directory, 'node_modules'));
   await mkdir(path.join(f.launchersRoot, 'owner'), { recursive: true });
-  const launcher = path.join(f.launchersRoot, 'owner/demo.command');
+  const launcher = path.join(f.launchersRoot, 'owner', `demo${process.platform === 'win32' ? '.bat' : '.command'}`);
   await writeFile(launcher, '');
   await assert.rejects(f.install(), /different file already uses this launcher name/);
   assert.equal(await readFile(launcher, 'utf8'), '');
@@ -263,7 +283,7 @@ test('setup refuses symlinks at state and launcher output boundaries', async (t)
   await symlink(outside, path.join(f.launchersRoot, 'owner'));
   await assert.rejects(f.install(), /symlink/);
   await assert.rejects(readFile(path.join(outside, 'demo.json')), { code: 'ENOENT' });
-  await assert.rejects(readFile(path.join(outside, 'demo.command')), { code: 'ENOENT' });
+  await assert.rejects(readFile(path.join(outside, `demo${process.platform === 'win32' ? '.bat' : '.command'}`)), { code: 'ENOENT' });
 });
 
 test('static projects install a local launcher and serve HTML without exposing dotfiles or symlink escapes', async (t) => {
@@ -410,10 +430,11 @@ test('Godot projects are detected when the editor is on PATH', async (t) => {
   await writeFile(path.join(f.directory, 'project.godot'), '[application]\nname="demo"\n');
   const bin = path.join(f.temp, 'bin');
   await mkdir(bin);
-  const godot = path.join(bin, 'godot');
-  await writeFile(godot, '#!/bin/sh\necho godot-stub\n');
-  await chmod(godot, 0o755);
-  const seen = await inspectProject(f.input, { env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH || ''}` } });
+  const godot = path.join(bin, process.platform === 'win32' ? 'godot.cmd' : 'godot');
+  await writeFile(godot, process.platform === 'win32' ? '@echo off\r\necho godot-stub\r\n' : '#!/bin/sh\necho godot-stub\n');
+  if (process.platform !== 'win32') await chmod(godot, 0o755);
+  const env = withPath(process.env, `${bin}${path.delimiter}${process.env.PATH || ''}`);
+  const seen = await inspectProject(f.input, { env });
   assert.equal(seen.kind, 'godot');
   assert.equal(seen.supported, true);
   assert.equal(seen.godotPath, godot);
@@ -422,7 +443,7 @@ test('Godot projects are detected when the editor is on PATH', async (t) => {
 test('Godot projects without an installed editor report manual setup', async (t) => {
   const f = await fixture(t, null);
   await writeFile(path.join(f.directory, 'project.godot'), '[application]\nname="demo"\n');
-  const seen = await inspectProject(f.input, { env: { ...process.env, PATH: '/nonexistent-dashboard-probe' } });
+  const seen = await inspectProject(f.input, { env: withPath(process.env, '/nonexistent-dashboard-probe') });
   assert.equal(seen.kind, 'godot');
   assert.equal(seen.supported, false);
   assert.match(seen.message, /Install Godot/);
@@ -457,12 +478,14 @@ test('Godot install creates an editor launcher and becomes ready without a packa
   await writeFile(path.join(directory, 'project.godot'), '[application]\nname="demo"\n');
   const bin = path.join(temp, 'bin');
   await mkdir(bin);
-  const godot = path.join(bin, 'godot');
+  const godot = path.join(bin, process.platform === 'win32' ? 'godot.cmd' : 'godot');
   const launched = path.join(temp, 'launched');
-  await writeFile(godot, `#!/bin/sh\necho "editor-stub $@" > "${launched}"\n`);
-  await chmod(godot, 0o755);
-  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH || ''}`, REPO_DASHBOARD_NO_OPEN: '1' };
-  const installer = createProjectInstaller({ stateRoot: path.join(temp, 'state'), launchersRoot: path.join(temp, 'apps'), env, platform: 'linux' });
+  await writeFile(godot, process.platform === 'win32'
+    ? `@echo off\r\n(echo editor-stub %*) > "${launched}"\r\n`
+    : `#!/bin/sh\necho "editor-stub $@" > "${launched}"\n`);
+  if (process.platform !== 'win32') await chmod(godot, 0o755);
+  const env = { ...withPath(process.env, `${bin}${path.delimiter}${process.env.PATH || ''}`), REPO_DASHBOARD_NO_OPEN: '1' };
+  const installer = createProjectInstaller({ stateRoot: path.join(temp, 'state'), launchersRoot: path.join(temp, 'apps'), env });
   const input = { directory, fullName: 'owner/godot-game' };
   const before = await installer.describe(input);
   assert.equal(before.kind, 'godot');
@@ -471,7 +494,7 @@ test('Godot install creates an editor launcher and becomes ready without a packa
   assert.equal(result.ready, true);
   assert.equal(result.kind, 'godot');
   assert.ok((await readFile(result.launcherPath, 'utf8')).includes('--editor --path'));
-  await exec('bash', [result.launcherPath], { env });
+  await executeLauncher(result.launcherPath, { env });
   assert.match(await readFile(launched, 'utf8'), /--editor/);
   assert.equal((await installer.describe(input)).ready, true);
 });

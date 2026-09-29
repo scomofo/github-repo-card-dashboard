@@ -58,7 +58,7 @@ test('Install locally downloads source, installs dependencies, and creates a lau
   assert.equal(result.repo.installed, true);
   assert.equal(result.repo.project.ready, true);
   assert.equal(await readFile(path.join(f.directory, 'node_modules/setup-marker'), 'utf8'), 'first');
-  assert.ok((await stat(result.repo.project.launcherPath)).mode & 0o111);
+  if (process.platform !== 'win32') assert.ok((await stat(result.repo.project.launcherPath)).mode & 0o111);
   assert.equal(await git(f.directory, 'status', '--porcelain'), '');
   await assert.rejects(stat(path.join(f.directory, 'package-lock.json')), { code: 'ENOENT' });
 
@@ -101,7 +101,7 @@ test('unsupported repos remain source downloads instead of being reported as ins
   assert.equal(repo.installed, true);
   assert.equal(repo.project.supported, false);
   assert.equal(repo.project.ready, false);
-  assert.equal(await readFile(path.join(f.directory, 'README.md'), 'utf8'), 'Local app fixture\n');
+  assert.equal((await readFile(path.join(f.directory, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'Local app fixture\n');
 });
 
 test('app install retains the per-repository lock until dependency setup finishes', async (t) => {
