@@ -1,0 +1,25 @@
+name: Session regression
+
+# Playwright session regression for the dashboard: server health, page load,
+# card rendering, and the double-click clone/install/update flows against
+# hermetic local Git fixtures (no real GitHub traffic).
+on:
+  push:
+    branches:
+      - scout/session-regression
+
+permissions:
+  contents: read
+
+jobs:
+  session-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e

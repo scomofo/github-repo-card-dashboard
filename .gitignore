@@ -1,2 +1,7 @@
 .DS_Store
 .superpowers/
+
+# Playwright session regression (generated)
+tests/e2e/fixtures/
+test-results/
+playwright-report/
