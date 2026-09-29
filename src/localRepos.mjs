@@ -13,6 +13,7 @@ const LOG_TAIL_BYTES = 64 * 1024;
 const ICON_CANDIDATES = [
   'public/favicon.svg', 'public/favicon.png', 'public/favicon.ico',
   'favicon.svg', 'favicon.png', 'favicon.ico',
+  'public/app-icon.png', 'app-icon.png',
   'public/icon.svg', 'public/icon.png', 'icon.svg', 'icon.png',
   'public/logo.svg', 'public/logo.png', 'logo.svg', 'logo.png',
   'public/apple-touch-icon.png', 'apple-touch-icon.png'
