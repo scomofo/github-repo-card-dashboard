@@ -2128,7 +2128,7 @@
           }
         }));
         results.push(...enriched);
-        setProgress(0.45 + 0.55 * (done / Math.max(candidates.length, 1)), `Checking Actions status ${done} of ${candidates.length}…`);
+        setProgress(0.45 + 0.55 * (done / Math.max(repos.length, 1)), `Checking Actions status ${done} of ${repos.length}…`);
       }
 
       return results;
