@@ -38,9 +38,10 @@ test('Windows default paths fall back when APPDATA is missing', () => {
 });
 
 test('macOS default paths are unchanged', () => {
-  const projects = dashboardProjectsRoot('darwin', {});
+  const macPath = (value) => value.replaceAll('\\', '/');
+  const projects = macPath(dashboardProjectsRoot('darwin', {}));
   assert.ok(projects.endsWith('Library/Application Support/Repo Dashboard Projects'), projects);
-  assert.ok(dashboardAppsRoot('darwin', {}).endsWith('Applications/Repo Apps'));
-  assert.ok(dashboardCacheRoot('darwin', {}).endsWith('Library/Caches/Repo Dashboard'));
-  assert.ok(dashboardLogRoot('darwin', {}).endsWith('Library/Logs/Repo Dashboard'));
+  assert.ok(macPath(dashboardAppsRoot('darwin', {})).endsWith('Applications/Repo Apps'));
+  assert.ok(macPath(dashboardCacheRoot('darwin', {})).endsWith('Library/Caches/Repo Dashboard'));
+  assert.ok(macPath(dashboardLogRoot('darwin', {})).endsWith('Library/Logs/Repo Dashboard'));
 });
