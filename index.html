@@ -744,8 +744,6 @@
 
     .card.attention { border-color: color-mix(in srgb, var(--warn) 55%, var(--border)); }
     .card.attention.severe { border-color: color-mix(in srgb, var(--danger) 60%, var(--border)); }
-    .card.archived { opacity: 0.72; }
-    .card.archived:hover { opacity: 1; }
 
     .card-main { padding: 13px 14px 12px; flex: 1; }
 
@@ -1609,8 +1607,7 @@
       { key: 'active', label: 'Active this week', test: (repo) => repo.activity === 'active' },
       { key: 'stale', label: 'Stale', test: (repo) => repo.activity === 'stale' },
       { key: 'private', label: 'Private', test: (repo) => repo.isPrivate },
-      { key: 'forks', label: 'Forks', test: (repo) => repo.isFork },
-      { key: 'archived', label: 'Archived', test: (repo) => repo.isArchived }
+      { key: 'forks', label: 'Forks', test: (repo) => repo.isFork }
     ];
 
     const SORTERS = {
@@ -1915,7 +1912,7 @@
       try {
         const repos = await fetchRepositories();
         const withRuns = await enrichWithWorkflowStatus(repos);
-        state.repos = withRuns.map(decorateRepo);
+        state.repos = withRuns.filter((repo) => !repo.isArchived).map(decorateRepo);
         state.updatedAt = new Date().toISOString();
         state.fromCache = false;
         rebuildFacets();
@@ -2114,15 +2111,11 @@
     async function enrichWithWorkflowStatus(repos) {
       const limit = 8;
       const results = [];
-      const candidates = repos.filter((repo) => !repo.isArchived);
       let done = 0;
 
       for (let index = 0; index < repos.length; index += limit) {
         const batch = repos.slice(index, index + limit);
         const enriched = await Promise.all(batch.map(async (repo) => {
-          if (repo.isArchived) {
-            return { ...repo, workflow: { status: 'none', conclusion: null, text: 'Archived', history: [] } };
-          }
           try {
             const path = `/repos/${repo.fullName}/actions/runs?per_page=6&branch=${encodeURIComponent(repo.defaultBranch)}`;
             const data = await githubRest(path);
@@ -2174,8 +2167,7 @@
     function decorateRepo(repo) {
       const days = repo.pushedAt ? (Date.now() - timeOf(repo.pushedAt)) / DAY : Infinity;
       let activity = 'active';
-      if (repo.isArchived) activity = 'archived';
-      else if (days > STALE_DAYS) activity = 'stale';
+      if (days > STALE_DAYS) activity = 'stale';
       else if (days > ACTIVE_DAYS) activity = 'recent';
 
       const reviewNeeded = (repo.prs || []).filter((pr) => !pr.isDraft && pr.reviewDecision !== 'APPROVED').length;
@@ -2183,31 +2175,29 @@
 
       const reasons = [];
       let score = 0;
-      if (!repo.isArchived) {
-        if (repo.workflow.status === 'failure') {
-          score += 40;
-          reasons.push({ level: 'danger', text: `CI ${repo.workflow.conclusion ? repo.workflow.conclusion.replaceAll('_', ' ') : 'failing'}` });
-        }
-        if (changesRequested > 0) {
-          score += 12;
-          reasons.push({ level: 'warn', text: `${changesRequested} PR${changesRequested === 1 ? '' : 's'} with changes requested` });
-        }
-        if (reviewNeeded > 0) {
-          score += 15;
-          reasons.push({ level: 'warn', text: `${reviewNeeded} PR${reviewNeeded === 1 ? '' : 's'} awaiting review` });
-        }
-        if (repo.openPrs > 0) {
-          score += 8 + Math.min(repo.openPrs, 5) * 2;
-          reasons.push({ level: 'info', text: `${repo.openPrs} open PR${repo.openPrs === 1 ? '' : 's'}` });
-        }
-        if (repo.openIssues > 0) {
-          score += 2 + Math.min(repo.openIssues, 10) * 2;
-          reasons.push({ level: 'info', text: `${repo.openIssues} open issue${repo.openIssues === 1 ? '' : 's'}` });
-        }
-        if (activity === 'stale') {
-          score += 4;
-          reasons.push({ level: 'muted', text: `No pushes for ${Math.floor(days)} days` });
-        }
+      if (repo.workflow.status === 'failure') {
+        score += 40;
+        reasons.push({ level: 'danger', text: `CI ${repo.workflow.conclusion ? repo.workflow.conclusion.replaceAll('_', ' ') : 'failing'}` });
+      }
+      if (changesRequested > 0) {
+        score += 12;
+        reasons.push({ level: 'warn', text: `${changesRequested} PR${changesRequested === 1 ? '' : 's'} with changes requested` });
+      }
+      if (reviewNeeded > 0) {
+        score += 15;
+        reasons.push({ level: 'warn', text: `${reviewNeeded} PR${reviewNeeded === 1 ? '' : 's'} awaiting review` });
+      }
+      if (repo.openPrs > 0) {
+        score += 8 + Math.min(repo.openPrs, 5) * 2;
+        reasons.push({ level: 'info', text: `${repo.openPrs} open PR${repo.openPrs === 1 ? '' : 's'}` });
+      }
+      if (repo.openIssues > 0) {
+        score += 2 + Math.min(repo.openIssues, 10) * 2;
+        reasons.push({ level: 'info', text: `${repo.openIssues} open issue${repo.openIssues === 1 ? '' : 's'}` });
+      }
+      if (activity === 'stale') {
+        score += 4;
+        reasons.push({ level: 'muted', text: `No pushes for ${Math.floor(days)} days` });
       }
 
       return {
@@ -2351,7 +2341,6 @@
     }
 
     function renderSummary(repos) {
-      const live = repos.filter((repo) => !repo.isArchived);
       const totals = {
         repos: repos.length,
         attention: repos.filter((repo) => repo.attention.score > 0).length,
@@ -2363,14 +2352,13 @@
         active: repos.filter((repo) => repo.activity === 'active').length,
         stale: repos.filter((repo) => repo.activity === 'stale').length,
         stars: repos.reduce((sum, repo) => sum + repo.stars, 0),
-        private: repos.filter((repo) => repo.isPrivate).length,
-        archived: repos.filter((repo) => repo.isArchived).length
+        private: repos.filter((repo) => repo.isPrivate).length
       };
 
       const tiles = [
-        { key: 'all', icon: 'repo', label: 'Repositories', value: totals.repos, note: `${totals.private} private · ${totals.archived} archived` },
+        { key: 'all', icon: 'repo', label: 'Repositories', value: totals.repos, note: `${totals.private} private` },
         { key: 'attention', icon: 'alert', label: 'Need attention', value: totals.attention, tone: totals.attention ? 'warn' : 'ok', note: totals.attention ? 'sorted by urgency' : 'all clear' },
-        { key: 'failing', icon: 'x', label: 'Failing CI', value: totals.failing, tone: totals.failing ? 'danger' : 'ok', note: `${live.filter((repo) => repo.workflow.status === 'success').length} passing` },
+        { key: 'failing', icon: 'x', label: 'Failing CI', value: totals.failing, tone: totals.failing ? 'danger' : 'ok', note: `${repos.filter((repo) => repo.workflow.status === 'success').length} passing` },
         { key: 'review', icon: 'eye', label: 'PRs awaiting review', value: totals.review, tone: totals.review ? 'warn' : '', note: `${totals.prs} open PRs total` },
         { key: 'issues', icon: 'issue', label: 'Open issues', value: totals.issues, note: `across ${repos.filter((repo) => repo.openIssues > 0).length} repos` },
         { key: 'active', icon: 'commit', label: 'Commits (30d)', value: totals.commits, note: `${totals.active} repos pushed this week` },
@@ -2413,13 +2401,11 @@
         { label: 'This year', test: (days) => days >= 90 && days < 365 },
         { label: 'Older', test: (days) => days >= 365 }
       ];
-      const activeRepos = repos.filter((repo) => !repo.isArchived);
-      const counts = buckets.map((bucket) => activeRepos.filter((repo) => repo.daysSincePush !== null && bucket.test(repo.daysSincePush)).length);
-      const archived = repos.length - activeRepos.length;
-      const max = Math.max(...counts, archived, 1);
+      const counts = buckets.map((bucket) => repos.filter((repo) => repo.daysSincePush !== null && bucket.test(repo.daysSincePush)).length);
+      const max = Math.max(...counts, 1);
       els.activityBars.innerHTML = buckets.map((bucket, index) => `
         <div class="bar-row"><span>${bucket.label}</span><div class="bar"><span style="width:${(counts[index] / max) * 100}%"></span></div><b>${counts[index]}</b></div>
-      `).join('') + (archived ? `<div class="bar-row"><span>Archived</span><div class="bar"><span style="width:${(archived / max) * 100}%;background:var(--faint)"></span></div><b>${archived}</b></div>` : '');
+      `).join('');
 
       const starred = [...repos].sort((a, b) => b.stars - a.stars || b.forks - a.forks).slice(0, 5);
       els.topStarred.innerHTML = starred.length ? starred.map((repo) => `
@@ -2496,7 +2482,6 @@
       const classes = ['card'];
       if (attentionGrid && repo.attention.score > 0) classes.push('attention');
       if (attentionGrid && repo.workflow.status === 'failure') classes.push('severe');
-      if (repo.isArchived) classes.push('archived');
       const workflowClass = getWorkflowClass(repo.workflow.status);
       const activityBadge = activityBadgeFor(repo);
 
@@ -2514,7 +2499,6 @@
               <div class="card-flags">
                 <span class="flag" title="${repo.isPrivate ? 'Private' : 'Public'}">${icon(repo.isPrivate ? 'lock' : 'globe')}</span>
                 ${repo.isFork ? `<span class="flag" title="Fork">${icon('fork')}</span>` : ''}
-                ${repo.isArchived ? `<span class="flag" title="Archived">${icon('archive')}</span>` : ''}
                 ${repo.isTemplate ? `<span class="flag" title="Template">${icon('layers')}</span>` : ''}
               </div>
             </div>
@@ -2548,7 +2532,6 @@
     }
 
     function activityBadgeFor(repo) {
-      if (repo.isArchived) return '<span class="badge">Archived</span>';
       if (repo.activity === 'stale') return `<span class="badge warn" title="No pushes for ${repo.daysSincePush} days">${icon('clock')}Stale</span>`;
       if (repo.activity === 'active') return `<span class="badge accent" title="Pushed within ${ACTIVE_DAYS} days">${icon('zap')}Active</span>`;
       return '';
@@ -2609,7 +2592,6 @@
       const workflow = repo.workflow;
       const chips = [
         `<span class="badge">${icon(repo.isPrivate ? 'lock' : 'globe')}${escapeHtml(formatVisibility(repo.visibility))}</span>`,
-        repo.isArchived ? `<span class="badge">${icon('archive')}Archived</span>` : '',
         repo.isFork ? `<span class="badge">${icon('fork')}Fork</span>` : '',
         repo.isTemplate ? `<span class="badge">${icon('layers')}Template</span>` : '',
         repo.license ? `<span class="badge" title="License">${escapeHtml(repo.license)}</span>` : '',
@@ -3194,7 +3176,7 @@
       try {
         const cached = JSON.parse(localStorage.getItem(STORAGE_CACHE) || 'null');
         if (!cached?.repos?.length) return;
-        state.repos = cached.repos.map(decorateRepo);
+        state.repos = cached.repos.filter((repo) => !repo.isArchived).map(decorateRepo);
         state.viewer = cached.viewer || null;
         state.rate = cached.rate || state.rate;
         state.updatedAt = cached.savedAt;
