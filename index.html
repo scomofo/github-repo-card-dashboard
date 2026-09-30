@@ -2837,6 +2837,11 @@
       const label = !available ? 'Local manager offline' : pending ? 'Working…' : !repo ? 'Not scanned' : labels[repo.state] || 'Needs attention';
       const tone = pending ? 'info' : repo?.state === 'ready' && repo.project?.ready ? 'ok' : repo?.state === 'behind' ? 'info'
         : repo && !['ready', 'not-installed'].includes(repo.state) ? 'warn' : '';
+      // Project type is its own neutral identity, independent of the git-state
+      // badge: a Godot checkout without the editor on PATH is a project fact,
+      // not something needing attention.
+      const kindLabels = { godot: 'Godot project', node: 'Node app', static: 'Static site', python: 'Python project' };
+      const kindBadge = repo?.project ? kindLabels[repo.project.kind] || null : null;
       const action = localPrimaryAction(repo);
       const allowed = Boolean(action);
       const actionLabel = pending ? 'Working…' : action === 'update-app' ? 'Update app' : action === 'launch' ? 'Launch app' : 'Install locally';
@@ -2847,6 +2852,7 @@
       const appMessage = repo?.project?.message || (repo?.installed && !repo.project?.ready ? 'Source is downloaded. App setup has not completed.' : '');
       return `<div class="local-repo">
         <div class="local-state-row"><span class="badge ${tone}">${escapeHtml(label)}</span>
+          ${kindBadge ? `<span class="badge info" title="Detected project type">${escapeHtml(kindBadge)}</span>` : ''}
           ${repo?.branch ? `<span>${escapeHtml(repo.branch)}</span>` : ''}
           ${repo?.ahead ? `<span>${Number(repo.ahead)} ahead</span>` : ''}${repo?.behind ? `<span>${Number(repo.behind)} behind</span>` : ''}
         </div>

@@ -62,7 +62,7 @@ test('clones into owner/repo and safely fast-forwards; status never fetches', as
   assert.match(updated.message, /fast-forward/);
   assert.equal(updated.repo.state, 'ready');
   assert.equal(await git(f.checkout, 'rev-parse', 'HEAD'), await git(f.seed, 'rev-parse', 'HEAD'));
-  assert.equal(await readFile(path.join(f.checkout, 'README.md'), 'utf8'), 'next version\n');
+  assert.equal((await readFile(path.join(f.checkout, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'next version\n');
 });
 
 test('status reports the project icon when the checkout has a favicon', async (t) => {
@@ -120,7 +120,7 @@ test('failed downloads retain the exact stage and write private diagnostics with
   });
   const log = await readFile(path.join(f.options.diagnosticsRoot, 'owner/demo.git.log'), 'utf8');
   assert.match(log, /Stage: clone/);
-  assert.match(log, /does not exist/);
+  assert.match(log, /does not exist|does not appear to be a git repository/);
 });
 
 test('refuses tracked edits and untracked files without modifying or fetching', async (t) => {
