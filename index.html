@@ -1299,6 +1299,8 @@
     .local-results:empty { display: none; }
     .local-results .error { color: var(--danger); }
     .local-results .success { color: var(--ok); }
+    .local-results .stash-offer { list-style: none; margin: 6px 0; }
+    .local-results .stash-offer button { margin-left: 8px; }
     .local-live-log { max-height: 180px; overflow-y: auto; margin: 6px 0 0; padding: 8px 10px; border-radius: 8px;
       border: 1px solid var(--border); background: var(--panel-soft); color: var(--text);
       font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -2865,7 +2867,9 @@
           ${repo?.project?.ready && action !== 'launch' ? button('launch', 'Launch app', canLaunch) : ''}
           ${repo?.installed ? `${button('open', openerLabels[0], canOpen)}${button('terminal', openerLabels[1], canOpen)}` : ''}
           ${detail ? button(repo?.installed ? 'update' : 'clone', repo?.installed ? 'Update source only' : 'Download source only', canAct && (repo?.installed ? canUpdateLocal(repo) : repo?.state === 'not-installed')) : ''}
+          ${repo?.state === 'dirty' ? button('stash', 'Stash changes', canAct) : ''}
         </div>
+        ${repo?.state === 'dirty' ? '<p class="local-note">Stash shelves your local edits and untracked files so the checkout is clean enough to update. Restore them later with <code>git stash pop</code> in Terminal.</p>' : ''}
         ${repo?.project?.ready && !canUpdateLocal(repo) ? '<p class="local-note">Launch uses your current checkout. Resolve local changes or branch history before updating.</p>' : ''}
         ${detail ? '<p class="local-note" style="margin:10px 0 0">Install and Update app run package scripts. Supported apps get a launcher in ~/Applications/Repo Apps. Source-only actions do not install dependencies.</p>' : ''}
       </div>`;
@@ -2947,7 +2951,7 @@
     }
 
     async function runLocalAction(fullName, action, { bulk = false } = {}) {
-      if (!state.repos.some((repo) => repo.fullName === fullName) || !['clone', 'update', 'install', 'update-app', 'launch', 'open', 'terminal'].includes(action)) return false;
+      if (!state.repos.some((repo) => repo.fullName === fullName) || !['clone', 'update', 'install', 'update-app', 'launch', 'open', 'terminal', 'stash'].includes(action)) return false;
       if (!localManagerReady() || state.local.pending.has(fullName) || state.local.scanning || state.local.bulk && !bulk) return false;
       if (['install', 'update-app', 'launch'].includes(action) && !state.server.projectInstall) {
         els.localProgress.textContent = 'Restart or reinstall Repo Dashboard to enable app installation.';
@@ -2955,10 +2959,11 @@
       }
       const local = state.local.repos.get(fullName);
       if (action === 'clone' && local?.state !== 'not-installed' || ['update', 'update-app'].includes(action) && !canUpdateLocal(local)) return false;
+      if (action === 'stash' && local?.state !== 'dirty') return false;
       if (action === 'install' && !canInstallLocal(local)) return false;
       if (action === 'launch' && !canLaunchLocal(local)) return false;
       state.local.pending.add(fullName);
-      const actionVerb = { clone: 'Downloading source for', update: 'Updating source for', install: 'Installing app and dependencies for', 'update-app': 'Updating app and dependencies for', launch: 'Launching' }[action] || 'Opening';
+      const actionVerb = { clone: 'Downloading source for', update: 'Updating source for', install: 'Installing app and dependencies for', 'update-app': 'Updating app and dependencies for', launch: 'Launching', stash: 'Stashing local changes for' }[action] || 'Opening';
       if (!bulk) els.localProgress.textContent = `${actionVerb} ${fullName}… Keep this window open until the result appears.`;
       renderLocalViews();
       let success = false;
@@ -2994,7 +2999,7 @@
         localResult(fullName, error.message, false);
       } finally {
         if (logTimer) { clearInterval(logTimer); logTimer = null; await pollLog(); }
-        if (localManagerReady() && ['clone', 'update', 'install', 'update-app'].includes(action)) {
+        if (localManagerReady() && ['clone', 'update', 'install', 'update-app', 'stash'].includes(action)) {
           try { await readLocalStatus([fullName]); }
           catch (error) { localResult(fullName, `Could not refresh local status: ${error.message}`, false); }
         }
@@ -3015,6 +3020,7 @@
       let completed = 0;
       let failed = 0;
       let skipped = 0;
+      const dirtySkipped = [];
       try {
         const names = state.repos.map((repo) => repo.fullName);
         const statuses = await readLocalStatus(names);
@@ -3023,6 +3029,7 @@
         for (const repo of installed.filter((item) => !canUpdateLocal(item))) {
           skipped++;
           localResult(repo.fullName, `Skipped — ${repo.message || 'local changes or branch history need attention'}.`, false);
+          if (repo.dirty) dirtySkipped.push(repo);
         }
         for (let i = 0; i < eligible.length; i++) {
           els.localProgress.textContent = `Checking & updating ${i + 1} of ${eligible.length}: ${eligible[i].fullName}. Keep this window open.`;
@@ -3035,6 +3042,64 @@
           }
         }
         els.localProgress.textContent = `Finished: ${completed} checked successfully, ${failed} failed, ${skipped} skipped. No repositories were automatically cloned.`;
+        if (dirtySkipped.length) offerStashRetry(dirtySkipped);
+      } catch (error) {
+        els.localProgress.textContent = error.message;
+        localResult('', error.message, false);
+      } finally {
+        state.local.bulk = false;
+        renderLocalViews();
+      }
+    }
+
+    // One-click recovery for batch skips caused by local edits. Runs only when
+    // clicked — nothing is stashed automatically, in the background, or on a
+    // schedule. Each stash is recoverable with `git stash pop` in Terminal.
+    function offerStashRetry(dirtyRepos) {
+      const item = document.createElement('li');
+      item.className = 'stash-offer';
+      const label = document.createElement('span');
+      label.textContent = `${dirtyRepos.length === 1 ? '1 checkout was' : `${dirtyRepos.length} checkouts were`} skipped with local changes. Stash them (recoverable) and retry their updates?`;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'primary';
+      button.textContent = `Stash ${dirtyRepos.length === 1 ? 'it' : 'them'} and update`;
+      button.setAttribute('aria-label', `Stash local changes in ${dirtyRepos.map((repo) => repo.fullName).join(', ')} and retry updates`);
+      button.addEventListener('click', () => stashDirtyAndUpdate(dirtyRepos.map((repo) => repo.fullName), button));
+      item.appendChild(label);
+      item.appendChild(button);
+      els.localResults.appendChild(item);
+      while (els.localResults.children.length > 100) els.localResults.firstElementChild.remove();
+      els.localResults.scrollTop = els.localResults.scrollHeight;
+    }
+
+    async function stashDirtyAndUpdate(fullNames, button) {
+      if (!localManagerReady() || state.local.bulk || state.local.scanning || state.local.pending.size) return;
+      if (button) button.disabled = true;
+      state.local.bulk = true;
+      renderLocalViews();
+      const stashed = [];
+      let updated = 0;
+      let failed = 0;
+      try {
+        els.localProgress.textContent = `Stashing local changes in ${fullNames.length === 1 ? '1 checkout' : `${fullNames.length} checkouts`}… Keep this window open.`;
+        for (const fullName of fullNames) {
+          if (await runLocalAction(fullName, 'stash', { bulk: true })) stashed.push(fullName);
+          if (!localManagerReady()) break;
+        }
+        if (stashed.length) {
+          localResult('', `Stashed ${stashed.length === 1 ? '1 checkout' : `${stashed.length} checkouts`}: ${stashed.join(', ')}. Restore any of them later with git stash pop in Terminal.`);
+        }
+        for (const fullName of fullNames) {
+          const repo = state.local.repos.get(fullName);
+          if (!canUpdateLocal(repo)) continue;
+          els.localProgress.textContent = `Updating ${fullName} after the stash… Keep this window open.`;
+          const action = state.server.projectInstall && repo.project?.supported ? 'update-app' : 'update';
+          if (await runLocalAction(fullName, action, { bulk: true })) updated++;
+          else failed++;
+          if (!localManagerReady()) break;
+        }
+        els.localProgress.textContent = `Stash retry finished: ${stashed.length} stashed, ${updated} updated, ${failed} failed.`;
       } catch (error) {
         els.localProgress.textContent = error.message;
         localResult('', error.message, false);
