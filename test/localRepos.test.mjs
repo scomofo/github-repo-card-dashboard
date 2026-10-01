@@ -530,13 +530,13 @@ test('stash shelves tracked edits and untracked files so updates can proceed', a
   const after = await f.status();
   assert.equal(after.dirty, false);
   assert.equal(after.state, 'ready');
-  assert.equal(await readFile(path.join(f.checkout, 'README.md'), 'utf8'), 'initial version\n');
+  assert.equal((await readFile(path.join(f.checkout, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'initial version\n');
   const stashList = await git(f.checkout, 'stash', 'list');
   assert.match(stashList, /Repo Dashboard stash/);
   // Restoring works through the normal Git flow.
   await git(f.checkout, 'stash', 'pop');
-  assert.equal(await readFile(path.join(f.checkout, 'README.md'), 'utf8'), 'my unfinished work\n');
-  assert.equal(await readFile(path.join(f.checkout, 'untracked.txt'), 'utf8'), 'keep me\n');
+  assert.equal((await readFile(path.join(f.checkout, 'README.md'), 'utf8')).replaceAll('\r\n', '\n'), 'my unfinished work\n');
+  assert.equal((await readFile(path.join(f.checkout, 'untracked.txt'), 'utf8')).replaceAll('\r\n', '\n'), 'keep me\n');
 });
 
 test('stash refuses clean checkouts and blocked repositories', async (t) => {
