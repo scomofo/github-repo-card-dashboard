@@ -68,7 +68,7 @@ function harness(fetch, { protocol = 'http:' } = {}) {
     window: { matchMedia: () => ({ matches: false, addEventListener() {} }) },
     console, setTimeout, clearTimeout, setInterval, clearInterval
   });
-  vm.runInContext(`${script}\nglobalThis.dashboardTest = { state, els, bindEvents, handleCardActivation, handleCardDoubleClick, localPrimaryAction, runLocalAction, updateInstalledRepos, checkServer, renderLocalRepo, renderLocalPanel, readLocalStatus, cardIcon };`, context);
+  vm.runInContext(`${script}\nglobalThis.dashboardTest = { state, els, bindEvents, handleCardActivation, handleCardDoubleClick, localPrimaryAction, runLocalAction, updateInstalledRepos, stashDirtyAndUpdate, checkServer, renderLocalRepo, renderLocalPanel, readLocalStatus, cardIcon };`, context);
   const api = context.dashboardTest;
   api.state.server = { checked: true, online: true, localRepos: true, projectInstall: true, csrfToken: 'local-session-secret', platform: 'darwin', openai: false, model: '' };
   api.state.local.gitAvailable = true;
@@ -339,6 +339,40 @@ test('bulk update skips local edits and divergence, remains sequential, and cont
   assert.match(api.els.localResults.textContent, /gh auth login/);
   assert.match(api.els.localResults.textContent, /scott\/healthy: Updated successfully/);
   assert.match(api.els.localProgress.textContent, /1 checked successfully, 1 failed, 2 skipped/);
+});
+
+test('bulk update offers a one-click stash for dirty checkouts, names them, and retries their updates', async () => {
+  const statuses = [checkout('scott/edited', 'dirty'), checkout('scott/healthy', 'behind')];
+  const actions = [];
+  const stashedNames = new Set();
+  const api = harness(async (url, options) => {
+    const body = JSON.parse(options.body);
+    if (url.endsWith('/status')) return response({ root: '/Users/scott/Repos', gitAvailable: true,
+      repos: statuses.filter((repo) => body.repos.includes(repo.fullName))
+        .map((repo) => stashedNames.has(repo.fullName) ? checkout(repo.fullName) : repo) });
+    actions.push(body);
+    if (body.action === 'stash') {
+      stashedNames.add(body.fullName);
+      return response({ message: `Stashed local changes in ${body.fullName}.`, repo: checkout(body.fullName) });
+    }
+    return response({ message: 'Updated successfully.', repo: checkout(body.fullName) });
+  });
+  api.setRepos(statuses);
+  await api.updateInstalledRepos();
+
+  const offer = api.els.localResults.children.find((child) => child.className === 'stash-offer');
+  assert.ok(offer, 'expected a stash offer after the batch skipped a dirty checkout');
+  const button = offer.children.find((child) => child.listeners.has('click'));
+  assert.ok(button && !button.disabled);
+  await button.listeners.get('click')[0]();
+
+  assert.deepEqual(actions.map((action) => `${action.action}:${action.fullName}`),
+    ['update:scott/healthy', 'stash:scott/edited', 'update:scott/edited']);
+  assert.match(api.els.localResults.textContent, /Stashed 1 checkout: scott\/edited/);
+  assert.match(api.els.localResults.textContent, /scott\/edited: Updated successfully/);
+  assert.match(api.els.localProgress.textContent, /1 stashed, 1 updated, 0 failed/);
+  assert.equal(button.disabled, true);
+  assert.equal(api.state.local.bulk, false);
 });
 
 test('an expired local session stops the bulk queue and offers reconnection', async () => {
