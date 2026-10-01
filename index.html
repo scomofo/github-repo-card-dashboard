@@ -2865,7 +2865,9 @@
           ${repo?.project?.ready && action !== 'launch' ? button('launch', 'Launch app', canLaunch) : ''}
           ${repo?.installed ? `${button('open', openerLabels[0], canOpen)}${button('terminal', openerLabels[1], canOpen)}` : ''}
           ${detail ? button(repo?.installed ? 'update' : 'clone', repo?.installed ? 'Update source only' : 'Download source only', canAct && (repo?.installed ? canUpdateLocal(repo) : repo?.state === 'not-installed')) : ''}
+          ${repo?.state === 'dirty' ? button('stash', 'Stash changes', canAct) : ''}
         </div>
+        ${repo?.state === 'dirty' ? '<p class="local-note">Stash shelves your local edits and untracked files so the checkout is clean enough to update. Restore them later with <code>git stash pop</code> in Terminal.</p>' : ''}
         ${repo?.project?.ready && !canUpdateLocal(repo) ? '<p class="local-note">Launch uses your current checkout. Resolve local changes or branch history before updating.</p>' : ''}
         ${detail ? '<p class="local-note" style="margin:10px 0 0">Install and Update app run package scripts. Supported apps get a launcher in ~/Applications/Repo Apps. Source-only actions do not install dependencies.</p>' : ''}
       </div>`;
@@ -2947,7 +2949,7 @@
     }
 
     async function runLocalAction(fullName, action, { bulk = false } = {}) {
-      if (!state.repos.some((repo) => repo.fullName === fullName) || !['clone', 'update', 'install', 'update-app', 'launch', 'open', 'terminal'].includes(action)) return false;
+      if (!state.repos.some((repo) => repo.fullName === fullName) || !['clone', 'update', 'install', 'update-app', 'launch', 'open', 'terminal', 'stash'].includes(action)) return false;
       if (!localManagerReady() || state.local.pending.has(fullName) || state.local.scanning || state.local.bulk && !bulk) return false;
       if (['install', 'update-app', 'launch'].includes(action) && !state.server.projectInstall) {
         els.localProgress.textContent = 'Restart or reinstall Repo Dashboard to enable app installation.';
@@ -2955,10 +2957,11 @@
       }
       const local = state.local.repos.get(fullName);
       if (action === 'clone' && local?.state !== 'not-installed' || ['update', 'update-app'].includes(action) && !canUpdateLocal(local)) return false;
+      if (action === 'stash' && local?.state !== 'dirty') return false;
       if (action === 'install' && !canInstallLocal(local)) return false;
       if (action === 'launch' && !canLaunchLocal(local)) return false;
       state.local.pending.add(fullName);
-      const actionVerb = { clone: 'Downloading source for', update: 'Updating source for', install: 'Installing app and dependencies for', 'update-app': 'Updating app and dependencies for', launch: 'Launching' }[action] || 'Opening';
+      const actionVerb = { clone: 'Downloading source for', update: 'Updating source for', install: 'Installing app and dependencies for', 'update-app': 'Updating app and dependencies for', launch: 'Launching', stash: 'Stashing local changes for' }[action] || 'Opening';
       if (!bulk) els.localProgress.textContent = `${actionVerb} ${fullName}… Keep this window open until the result appears.`;
       renderLocalViews();
       let success = false;
@@ -2994,7 +2997,7 @@
         localResult(fullName, error.message, false);
       } finally {
         if (logTimer) { clearInterval(logTimer); logTimer = null; await pollLog(); }
-        if (localManagerReady() && ['clone', 'update', 'install', 'update-app'].includes(action)) {
+        if (localManagerReady() && ['clone', 'update', 'install', 'update-app', 'stash'].includes(action)) {
           try { await readLocalStatus([fullName]); }
           catch (error) { localResult(fullName, `Could not refresh local status: ${error.message}`, false); }
         }

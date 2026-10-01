@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createProjectInstaller, ProjectInstallError } from './projectInstall.mjs';
 import { writeDiagnosticLog } from './diagnostics.mjs';
 import { dashboardProjectsRoot, isWindowsReservedName } from './platformPaths.mjs';
-const ACTIONS = new Set(['clone', 'update', 'open', 'terminal', 'install', 'update-app', 'launch']);
+const ACTIONS = new Set(['clone', 'update', 'open', 'terminal', 'install', 'update-app', 'launch', 'stash']);
 const LOG_TAIL_BYTES = 64 * 1024;
 // Conventional favicon/logo locations, checked in order. SVG first: it scales
 // cleanly to card size. Only these relative paths are ever served as icons.
@@ -169,6 +169,7 @@ const FAILURE_STAGES = Object.freeze({
   config: 'reading repository configuration',
   origin: 'checking repository origin',
   revision: 'inspecting repository history',
+  stash: 'stashing local changes',
   'local-files': 'accessing local repository files',
   install: 'preparing app installation',
   launch: 'opening the app launcher',
@@ -176,7 +177,7 @@ const FAILURE_STAGES = Object.freeze({
 
 function gitStage(args) {
   return ({ '--version': 'git-version', 'ls-remote': 'remote-url', clone: 'clone', fetch: 'fetch', merge: 'merge',
-    status: 'status', config: 'config', remote: 'origin', 'rev-parse': 'revision' })[args[0]] || 'local-files';
+    status: 'status', config: 'config', remote: 'origin', 'rev-parse': 'revision', stash: 'stash' })[args[0]] || 'local-files';
 }
 
 /** Classify untrusted subprocess diagnostics without exposing their content.
@@ -431,6 +432,20 @@ export function createLocalRepoManager({
     return afterFetch.behind ? `Updated ${fullName} with a fast-forward. Your local work was preserved.` : `${fullName} is up to date with its tracked branch. Local commits were preserved.`;
   }
 
+  async function stashRepository(fullName) {
+    const directory = await verifyRepository(fullName);
+    const before = await inspect(fullName);
+    if (before.state === 'blocked') throw new LocalRepoError(before.message);
+    if (!before.dirty) throw new LocalRepoError('No local changes to stash. The checkout is already clean.', 409);
+    // --include-untracked matches the dashboard's dirty definition (tracked
+    // edits + untracked files). The message timestamps the stash so repeated
+    // stashes are distinguishable in `git stash list`.
+    await git(['stash', 'push', '--include-untracked', '--message', `Repo Dashboard stash ${new Date().toISOString()}`], directory);
+    const after = await inspect(fullName);
+    if (after.dirty) throw new LocalRepoError('Stash did not clear all local changes. Inspect the remaining files in Terminal.', 409);
+    return `Stashed local changes in ${fullName}. Restore them later with 'git stash pop' in Terminal.`;
+  }
+
   async function excludeGeneratedDependencies(directory) {
     // Keep generated dependencies out of Git status without editing .gitignore
     // or hiding any tracked files. Refuse symlinked Git metadata destinations.
@@ -461,7 +476,7 @@ export function createLocalRepoManager({
 
   async function runAction({ fullName, action } = {}) {
     validateFullName(fullName);
-    if (!ACTIONS.has(action)) throw new LocalRepoError('Choose install, update app, launch, download source, update source, Finder, or Terminal.', 400);
+    if (!ACTIONS.has(action)) throw new LocalRepoError('Choose install, update app, launch, download source, update source, stash, Finder, or Terminal.', 400);
     const key = fullName.toLowerCase();
     if (locks.has(key)) throw new LocalRepoError('An operation is already running for this repository. Wait for it to finish.');
     locks.add(key);
@@ -495,6 +510,9 @@ export function createLocalRepoManager({
         message = await cloneRepository(fullName);
       } else if (action === 'update') {
         message = await updateRepository(fullName);
+      } else if (action === 'stash') {
+        stage = 'stash';
+        message = await stashRepository(fullName);
       } else {
         await verifyRepository(fullName);
         const target = desktopTarget(action, directory, platform);

@@ -517,3 +517,31 @@ test('install log tails stream while invalid repository names are rejected', asy
   await assert.rejects(f.manager.readLog({ fullName: 'owner/../evil' }), /owner\/name/);
   await assert.rejects(f.manager.readLog({}), /owner\/name/);
 });
+
+test('stash shelves tracked edits and untracked files so updates can proceed', async (t) => {
+  const f = await fixture(t);
+  await f.clone();
+  await writeFile(path.join(f.checkout, 'README.md'), 'my unfinished work\n');
+  await writeFile(path.join(f.checkout, 'untracked.txt'), 'keep me\n');
+  assert.equal((await f.status()).state, 'dirty');
+  const result = await f.manager.runAction({ fullName, action: 'stash' });
+  assert.match(result.message, /Stashed local changes/);
+  assert.match(result.message, /git stash pop/);
+  const after = await f.status();
+  assert.equal(after.dirty, false);
+  assert.equal(after.state, 'ready');
+  assert.equal(await readFile(path.join(f.checkout, 'README.md'), 'utf8'), 'initial version\n');
+  const stashList = await git(f.checkout, 'stash', 'list');
+  assert.match(stashList, /Repo Dashboard stash/);
+  // Restoring works through the normal Git flow.
+  await git(f.checkout, 'stash', 'pop');
+  assert.equal(await readFile(path.join(f.checkout, 'README.md'), 'utf8'), 'my unfinished work\n');
+  assert.equal(await readFile(path.join(f.checkout, 'untracked.txt'), 'utf8'), 'keep me\n');
+});
+
+test('stash refuses clean checkouts and blocked repositories', async (t) => {
+  const f = await fixture(t);
+  await f.clone();
+  await assert.rejects(f.manager.runAction({ fullName, action: 'stash' }), /already clean/);
+  await assert.rejects(f.manager.runAction({ fullName, action: 'bogus' }), { statusCode: 400 });
+});
