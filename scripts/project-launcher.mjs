@@ -4,7 +4,7 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { inspectProject, spawnTarget, windowsQuote } from '../src/projectInstall.mjs';
+import { inspectProject, spawnTarget, windowsQuote, withoutDashboardPort } from '../src/projectInstall.mjs';
 
 function openBrowser(url) {
   if (process.env.REPO_DASHBOARD_NO_OPEN === '1') return;
@@ -87,7 +87,7 @@ export async function launchProject(recordPath) {
   // already handles this; the launcher must too.
   const windowsVerbatimArguments = process.platform === 'win32' && /(?:^|[\\/])cmd(?:\.exe)?$/i.test(spawnFile);
   const child = spawn(spawnFile, spawnArgs, { cwd: saved.directory, shell: false, detached: process.platform !== 'win32', windowsVerbatimArguments,
-    env: { ...process.env, NODE_ENV: 'development', HOST: '127.0.0.1', BROWSER: 'none' }, stdio: ['inherit', 'pipe', 'pipe'] });
+    env: { ...withoutDashboardPort(), NODE_ENV: 'development', HOST: '127.0.0.1', BROWSER: 'none' }, stdio: ['inherit', 'pipe', 'pipe'] });
   let opened = false;
   let buffer = '';
   const collect = (target, chunk) => {

@@ -123,6 +123,15 @@ export async function inspectProject(input, { env = process.env, platform = proc
     message: `Install dependencies with ${manager} and create a launcher for ${manager} run ${script}.` };
 }
 
+/** Environment for user- and app-facing child processes (terminal, file
+ * manager, launched apps): the dashboard's own PORT must never leak.
+ * App dev scripts honor an explicit $PORT, so a leaked 8787 would hijack
+ * every app's dev server onto the dashboard's port. */
+export function withoutDashboardPort(env = process.env) {
+  const { PORT: _dashboardPort, ...rest } = env;
+  return rest;
+}
+
 /** Quote one argv element for cmd.exe (CommandLineToArgvW rules). */
 export function windowsQuote(value) {
   if (!/[\s"]/.test(value)) return value;
