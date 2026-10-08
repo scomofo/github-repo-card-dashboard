@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { lstat, mkdir, open, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { createProjectInstaller, ProjectInstallError } from './projectInstall.mjs';
+import { createProjectInstaller, ProjectInstallError, withoutDashboardPort } from './projectInstall.mjs';
 import { writeDiagnosticLog } from './diagnostics.mjs';
 import { dashboardProjectsRoot, isWindowsReservedName } from './platformPaths.mjs';
 const ACTIONS = new Set(['clone', 'update', 'open', 'terminal', 'install', 'update-app', 'launch', 'stash', 'repair-lockfile']);
@@ -525,7 +525,7 @@ export function createLocalRepoManager({
         const openerName = platform === 'win32'
           ? (action === 'terminal' ? 'Command Prompt' : 'Explorer')
           : (action === 'terminal' ? 'Terminal' : 'Finder');
-        try { await execBounded(target.file, target.args, { timeout: 10_000, maxBuffer: 64 * 1024, env }); }
+        try { await execBounded(target.file, target.args, { timeout: 10_000, maxBuffer: 64 * 1024, env: withoutDashboardPort(env) }); }
         catch { throw new LocalRepoError(`${openerName} could not open this folder. Open the displayed repository path manually.`, 502); }
         message = `Opened ${fullName} in ${openerName}.`;
       }

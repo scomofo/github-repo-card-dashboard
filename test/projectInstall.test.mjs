@@ -7,7 +7,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
-import { buildGodotLauncher, buildLauncher, createProjectInstaller, findManagerPath, inspectProject, spawnTarget, windowsQuote } from '../src/projectInstall.mjs';
+import { buildGodotLauncher, buildLauncher, createProjectInstaller, findManagerPath, inspectProject, spawnTarget, windowsQuote, withoutDashboardPort } from '../src/projectInstall.mjs';
 import { loopbackUrl, serveStaticProject } from '../scripts/project-launcher.mjs';
 
 const exec = promisify(execFile);
@@ -572,3 +572,13 @@ test('repairLockfile sends Yarn 1.x and bun to Terminal', async (t) => {
   await writeFile(path.join(b.directory, 'bun.lock'), '');
   await assert.rejects(b.installer.repairLockfile(b.input), /Terminal/);
 });
+
+{
+  // The dashboard's own PORT must never reach user/app environments: app dev
+  // scripts honor an explicit $PORT, so a leaked 8787 would hijack every
+  // app's dev server onto the dashboard's port.
+  assert.deepEqual(withoutDashboardPort({ PORT: '8787', NODE_ENV: 'development' }), { NODE_ENV: 'development' });
+  assert.deepEqual(withoutDashboardPort({ NODE_ENV: 'development' }), { NODE_ENV: 'development' });
+  const realEnv = withoutDashboardPort();
+  assert.ok(!('PORT' in realEnv), 'dashboard PORT must not leak into child environments');
+}
