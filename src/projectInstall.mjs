@@ -263,7 +263,7 @@ export function createProjectInstaller({
   stateRoot = path.resolve(stateRoot ?? dashboardProjectsRoot(platform, env));
   launchersRoot = path.resolve(launchersRoot ?? dashboardAppsRoot(platform, env));
   runtimeRoot = path.resolve(runtimeRoot);
-  const childEnv = { ...env, NODE_ENV: 'development', CI: '1', COREPACK_ENABLE_AUTO_PIN: '0', COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' };
+  const childEnv = { ...withoutDashboardPort(env), NODE_ENV: 'development', CI: '1', COREPACK_ENABLE_AUTO_PIN: '0', COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' };
   // A browser's GitHub token is never included in these options. Preserve the
   // user's package registry authentication/environment for their own projects.
   const pending = new Set();
