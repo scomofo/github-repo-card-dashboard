@@ -498,3 +498,77 @@ test('Godot install creates an editor launcher and becomes ready without a packa
   assert.match(await readFile(launched, 'utf8'), /--editor/);
   assert.equal((await installer.describe(input)).ready, true);
 });
+
+async function fakeManagerBin(t, name, code) {
+  const temp = await mkdtemp(path.join(tmpdir(), 'fake-pm-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const bin = path.join(temp, 'bin');
+  await mkdir(bin);
+  const file = path.join(bin, name);
+  await writeFile(file, `#!${process.execPath}\n${code}`);
+  await chmod(file, 0o755);
+  return bin;
+}
+
+test('repairLockfile regenerates the npm lockfile with --package-lock-only', async (t) => {
+  const scratch = await mkdtemp(path.join(tmpdir(), 'repair-'));
+  t.after(() => rm(scratch, { recursive: true, force: true }));
+  const argsFile = path.join(scratch, 'args.json');
+  const bin = await fakeManagerBin(t, 'npm', `
+const fs = require('node:fs');
+const path = require('node:path');
+fs.writeFileSync(process.env.FAKE_ARGS_FILE, JSON.stringify(process.argv.slice(2)));
+fs.writeFileSync(path.join(process.cwd(), 'package-lock.json'), '{"name":"demo","lockfileVersion":3}');
+`);
+  const env = { ...withPath(process.env, bin), FAKE_ARGS_FILE: argsFile };
+  const f = await fixture(t, { name: 'demo', version: '1.0.0', scripts: { dev: 'node app.js' } }, { env });
+  await writeFile(path.join(f.directory, 'package-lock.json'), '{"name":"demo","lockfileVersion":2}');
+  const result = await f.installer.repairLockfile(f.input);
+  assert.equal(result.repaired, true);
+  assert.equal(result.manager, 'npm');
+  assert.match(result.message, /Install locally again/);
+  const args = JSON.parse(await readFile(argsFile, 'utf8'));
+  assert.ok(args.includes('--package-lock-only'), `expected --package-lock-only in ${args.join(' ')}`);
+  assert.ok(args.includes('--ignore-scripts'), 'repair must not run install scripts');
+  assert.match(await readFile(path.join(f.directory, 'package-lock.json'), 'utf8'), /"lockfileVersion":3/);
+});
+
+test('repairLockfile refuses when there is no lockfile', async (t) => {
+  const f = await fixture(t, { name: 'demo', version: '1.0.0', scripts: { dev: 'node app.js' } });
+  await assert.rejects(f.installer.repairLockfile(f.input), /no lockfile/i);
+});
+
+test('repairLockfile refuses non-node projects', async (t) => {
+  const f = await fixture(t, null);
+  await assert.rejects(f.installer.repairLockfile(f.input), /Node\.js projects/);
+});
+
+test('repairLockfile uses --mode update-lockfile for modern Yarn', async (t) => {
+  const scratch = await mkdtemp(path.join(tmpdir(), 'repair-'));
+  t.after(() => rm(scratch, { recursive: true, force: true }));
+  const argsFile = path.join(scratch, 'args.json');
+  const bin = await fakeManagerBin(t, 'yarn', `
+const fs = require('node:fs');
+if (process.argv[2] === '--version') { console.log('4.9.1'); process.exit(0); }
+fs.writeFileSync(process.env.FAKE_ARGS_FILE, JSON.stringify(process.argv.slice(2)));
+`);
+  const env = { ...withPath(process.env, bin), FAKE_ARGS_FILE: argsFile };
+  const f = await fixture(t, { name: 'demo', version: '1.0.0', packageManager: 'yarn@4.9.1', scripts: { dev: 'node app.js' } }, { env });
+  await writeFile(path.join(f.directory, 'yarn.lock'), '# yarn lockfile v1\n');
+  const result = await f.installer.repairLockfile(f.input);
+  assert.equal(result.repaired, true);
+  assert.equal(result.manager, 'yarn');
+  assert.deepEqual(JSON.parse(await readFile(argsFile, 'utf8')), ['install', '--mode', 'update-lockfile']);
+});
+
+test('repairLockfile sends Yarn 1.x and bun to Terminal', async (t) => {
+  const yarnBin = await fakeManagerBin(t, 'yarn', `console.log('1.22.19');`);
+  const yarnEnv = withPath(process.env, yarnBin);
+  const y = await fixture(t, { name: 'demo', version: '1.0.0', packageManager: 'yarn@1.22.19', scripts: { dev: 'node app.js' } }, { env: yarnEnv });
+  await writeFile(path.join(y.directory, 'yarn.lock'), '# yarn lockfile v1\n');
+  await assert.rejects(y.installer.repairLockfile(y.input), /Terminal/);
+  const bunBin = await fakeManagerBin(t, 'bun', `console.log('1.2.0');`);
+  const b = await fixture(t, { name: 'demo', version: '1.0.0', packageManager: 'bun@1.2.0', scripts: { dev: 'node app.js' } }, { env: withPath(process.env, bunBin) });
+  await writeFile(path.join(b.directory, 'bun.lock'), '');
+  await assert.rejects(b.installer.repairLockfile(b.input), /Terminal/);
+});
