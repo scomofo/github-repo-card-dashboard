@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createProjectInstaller, ProjectInstallError } from './projectInstall.mjs';
 import { writeDiagnosticLog } from './diagnostics.mjs';
 import { dashboardProjectsRoot, isWindowsReservedName } from './platformPaths.mjs';
-const ACTIONS = new Set(['clone', 'update', 'open', 'terminal', 'install', 'update-app', 'launch', 'stash']);
+const ACTIONS = new Set(['clone', 'update', 'open', 'terminal', 'install', 'update-app', 'launch', 'stash', 'repair-lockfile']);
 const LOG_TAIL_BYTES = 64 * 1024;
 // Conventional favicon/logo locations, checked in order. SVG first: it scales
 // cleanly to card size. Only these relative paths are ever served as icons.
@@ -476,7 +476,7 @@ export function createLocalRepoManager({
 
   async function runAction({ fullName, action } = {}) {
     validateFullName(fullName);
-    if (!ACTIONS.has(action)) throw new LocalRepoError('Choose install, update app, launch, download source, update source, stash, Finder, or Terminal.', 400);
+    if (!ACTIONS.has(action)) throw new LocalRepoError('Choose install, update app, launch, download source, update source, stash, repair lockfile, Finder, or Terminal.', 400);
     const key = fullName.toLowerCase();
     if (locks.has(key)) throw new LocalRepoError('An operation is already running for this repository. Wait for it to finish.');
     locks.add(key);
@@ -513,6 +513,11 @@ export function createLocalRepoManager({
       } else if (action === 'stash') {
         stage = 'stash';
         message = await stashRepository(fullName);
+      } else if (action === 'repair-lockfile') {
+        await verifyRepository(fullName);
+        stage = 'install';
+        const repaired = await projectInstaller.repairLockfile({ directory, fullName });
+        message = repaired.message;
       } else {
         await verifyRepository(fullName);
         const target = desktopTarget(action, directory, platform);

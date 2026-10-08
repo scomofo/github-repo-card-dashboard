@@ -279,6 +279,15 @@ export function createProjectInstaller({
     throw new ProjectInstallError(`${manager} is required by this repository but is not installed or not on PATH. Install ${manager}, reopen Repo Dashboard, and choose Install locally again.`, 503);
   }
 
+  async function yarnMajor(managerPath, directory) {
+    let version;
+    try { version = await runBounded(managerPath, ['--version'], { cwd: directory, env: childEnv, timeoutMs: 30_000, maxBytes: 64 * 1024, platform }); }
+    catch { throw new ProjectInstallError('Yarn could not start. Check the project’s required Yarn version in Terminal and retry.', 503); }
+    const major = Number(version.output.trim().split('.')[0]);
+    if (!Number.isInteger(major) || major < 1) throw new ProjectInstallError('Yarn did not report a supported version. Check Yarn in Terminal.');
+    return major;
+  }
+
   function descriptor(project, launcherPath, ready = false) {
     const { fingerprint, hasDependencies, hasLock, needsBuild, godotPath, ...publicFields } = project;
     return { ...publicFields, ready, ...(project.supported ? { launcherPath } : {}) };
@@ -327,11 +336,7 @@ export function createProjectInstaller({
         if (project.manager === 'pnpm') args = ['install', project.hasLock ? '--frozen-lockfile' : '--no-lockfile', '--prod=false'];
         if (project.manager === 'bun') args = ['install', project.hasLock ? '--frozen-lockfile' : '--no-save'];
         if (project.manager === 'yarn') {
-          let version;
-          try { version = await runBounded(managerPath, ['--version'], { cwd: directory, env: childEnv, timeoutMs: 30_000, maxBytes: 64 * 1024, platform }); }
-          catch { throw new ProjectInstallError('Yarn could not start. Check the project’s required Yarn version in Terminal and retry.', 503); }
-          const major = Number(version.output.trim().split('.')[0]);
-          if (!Number.isInteger(major) || major < 1) throw new ProjectInstallError('Yarn did not report a supported version. Check Yarn in Terminal.');
+          const major = await yarnMajor(managerPath, directory);
           if (major >= 2 && !project.hasLock) throw new ProjectInstallError('Modern Yarn requires a committed yarn.lock for automatic setup. Run yarn install in Terminal, commit the lockfile, then try again.');
           args = major >= 2 ? ['install', '--immutable'] : ['install', project.hasLock ? '--frozen-lockfile' : '--no-lockfile', '--non-interactive', '--production=false'];
         }
@@ -381,6 +386,50 @@ export function createProjectInstaller({
     } finally { pending.delete(key); }
   }
 
+  /** Regenerate an out-of-sync lockfile with the project's package manager.
+   * Lockfile-only modes never run install scripts or write node_modules: the
+   * repair only rewrites the lockfile, which the user reviews before retrying
+   * Install locally. Managers without a lockfile-only mode (Yarn 1.x, bun)
+   * stay Terminal-only. */
+  async function repairLockfile(input) {
+    const { directory, fullName } = identity(input);
+    const key = fullName.toLowerCase();
+    if (pending.has(key)) throw new ProjectInstallError('This app is already being installed. Wait for setup to finish.');
+    pending.add(key);
+    try {
+      const project = await inspectProject({ directory, fullName }, { env, platform });
+      if (!project.supported || project.kind !== 'node') throw new ProjectInstallError('Lockfile repair applies to Node.js projects with a dev or start script.', 400);
+      if (!project.hasLock) throw new ProjectInstallError('This project has no lockfile to repair. Choose Install locally to set up its dependencies.', 400);
+      const managerPath = await findManager(project.manager);
+      let args;
+      if (project.manager === 'npm') args = ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'];
+      else if (project.manager === 'pnpm') args = ['install', '--lockfile-only', '--ignore-scripts'];
+      else if (project.manager === 'yarn') {
+        const major = await yarnMajor(managerPath, directory);
+        if (major < 2) throw new ProjectInstallError('Yarn 1.x has no lockfile-only mode. Run yarn install in Terminal to update yarn.lock, review the changes, then choose Install locally again.', 409);
+        args = ['install', '--mode', 'update-lockfile'];
+      } else throw new ProjectInstallError('This package manager has no lockfile-only repair mode. Update its lockfile in Terminal, review the changes, then choose Install locally again.', 409);
+      const { logPath } = paths(fullName);
+      const header = `\nLockfile repair: ${project.manager} ${args.join(' ')}\nRepository: ${fullName}\nNode: ${process.version}\nPlatform: ${process.platform} ${process.arch}\n`;
+      await appendDiagnosticLog({ root: stateRoot, fullName, kind: 'install', content: header }).catch(() => {});
+      const streamChunk = (chunk) => {
+        appendDiagnosticLog({ root: stateRoot, fullName, kind: 'install', content: chunk.toString('utf8') }).catch(() => {});
+      };
+      try {
+        const result = await runBounded(managerPath, args, { cwd: directory, env: childEnv, timeoutMs, platform, onData: streamChunk });
+        await appendDiagnosticLog({ root: stateRoot, fullName, kind: 'install', content: `\nLockfile repair finished successfully.\n${result.output}` }).catch(() => {});
+      } catch (error) {
+        const detail = classifyPackageFailure(error, { stage: 'install' });
+        const written = await appendDiagnosticLog({ root: stateRoot, fullName, kind: 'install', content: `\nLockfile repair failed (${detail.reason}).\n${error.output || ''}` }).then(() => true, () => false);
+        throw new ProjectInstallError(`Lockfile repair failed (${detail.reason}). ${detail.message} Your source remains local. ${written ? `Check ${logPath}` : 'The diagnostic log could not be written; check folder permissions and disk space'}.`, detail.statusCode);
+      }
+      const after = await inspectProject({ directory, fullName }, { env, platform });
+      if (!after.supported || after.kind !== project.kind) throw new ProjectInstallError('Lockfile repair changed project setup files into an unsupported state. Review the changes in Terminal.');
+      return { repaired: true, manager: project.manager,
+        message: `Regenerated the ${project.manager} lockfile. Review the changes (for example git diff ${LOCKS[project.manager].join(' ')}), then choose Install locally again.` };
+    } finally { pending.delete(key); }
+  }
+
   async function launch(input) {
     const project = await describe(input);
     if (!project.ready) throw new ProjectInstallError(project.message);
@@ -401,5 +450,5 @@ export function createProjectInstaller({
     return { ...project, message: `Opening ${identity(input).fullName}. App output appears in Terminal.` };
   }
 
-  return { describe, install, launch };
+  return { describe, install, launch, repairLockfile };
 }
