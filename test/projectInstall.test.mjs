@@ -504,9 +504,20 @@ async function fakeManagerBin(t, name, code) {
   t.after(() => rm(temp, { recursive: true, force: true }));
   const bin = path.join(temp, 'bin');
   await mkdir(bin);
-  const file = path.join(bin, name);
-  await writeFile(file, `#!${process.execPath}\n${code}`);
-  await chmod(file, 0o755);
+  if (process.platform === 'win32') {
+    // Windows cannot execute shebang scripts, and withPath() replaces PATH
+    // with only this dir. The implementation probes name.cmd first on win32
+    // and routes .cmd through cmd.exe, so ship a .cmd shim instead.
+    // Snippets are CommonJS, hence .cjs (the package is "type": "module").
+    const script = path.join(bin, `${name}.fake.cjs`);
+    await writeFile(script, code);
+    await writeFile(path.join(bin, `${name}.cmd`),
+      `@echo off\r\n${windowsQuote(process.execPath)} ${windowsQuote(script)} %*\r\n`);
+  } else {
+    const file = path.join(bin, name);
+    await writeFile(file, `#!${process.execPath}\n${code}`);
+    await chmod(file, 0o755);
+  }
   return bin;
 }
 
