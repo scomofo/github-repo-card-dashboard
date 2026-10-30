@@ -98,6 +98,31 @@ test('buildPromptContext keeps repo context compact', () => {
   assert.ok(context.length < 1000);
 });
 
+test('buildPromptContext excludes archived repos like the dashboard UI', () => {
+  const mixed = [
+    ...repos,
+    {
+      fullName: 'scomofo/old-project',
+      owner: 'scomofo',
+      name: 'old-project',
+      url: 'https://github.com/scomofo/old-project',
+      description: 'Retired project',
+      openIssues: 5,
+      openPrs: 3,
+      workflow: { status: 'failure', text: 'Actions failure' },
+      pushedAt: new Date().toISOString(),
+      language: 'JavaScript',
+      isArchived: true
+    }
+  ];
+
+  const context = buildPromptContext(mixed);
+
+  assert.doesNotMatch(context, /scomofo\/old-project/);
+  assert.match(context, /scomofo\/api-service/);
+  assert.match(context, /scomofo\/docs/);
+});
+
 test('parseFallbackCommand understands the new read-only phrasings', () => {
   assert.deepEqual(parseFallbackCommand('overview'), { action: 'dashboard_overview' });
   assert.deepEqual(parseFallbackCommand('which PRs need review?'), { action: 'list_review_requests' });

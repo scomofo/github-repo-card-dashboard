@@ -52,7 +52,7 @@ export function parseFallbackCommand(message) {
 }
 
 export function buildPromptContext(repos) {
-  return repos.slice(0, 80).map((repo) => {
+  return repos.filter((repo) => !repo.isArchived).slice(0, 80).map((repo) => {
     return [
       repo.fullName,
       `issues=${repo.openIssues || 0}`,
