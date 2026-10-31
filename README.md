@@ -46,6 +46,7 @@ Choose **Details** to inspect a repository without installing or updating it. Th
 | **Update app** | Fetches from GitHub, fast-forwards an eligible checkout on its matching upstream branch, and refreshes project setup. |
 | **Launch app** | Starts the installed project's launch command in Terminal (macOS) or a new console window (Windows). |
 | **Update installed** | Updates eligible repositories in sequence and reports the result for each. |
+| **Stash changes** | Shelves local edits and untracked files when you choose it. After a batch update skips dirty checkouts, **Stash it/them and update** offers to stash those changes and retry their updates. |
 | **Scan local status** | Refreshes local checkout status. |
 | **Explorer / Finder** | Opens the installed repository's folder in Explorer (Windows) or Finder (macOS). |
 | **Command Prompt / Terminal** | Opens a terminal rooted at the installed repository's folder. |
@@ -58,7 +59,9 @@ Static sites run through a local server. A build-free site can also have a `pack
 
 Project setup records and install logs live in `~/Library/Application Support/Repo Dashboard Projects/OWNER/` on macOS and `%APPDATA%\Repo Dashboard Projects\OWNER\` on Windows, outside both your checkouts and the dashboard runtime. Reinstalling the dashboard preserves these records and the project launchers. While an install or update-app runs, the dashboard streams the install log live in the results list below the progress message.
 
-Updates stop when there are local changes, a conflicting destination, an unexpected origin, a detached branch, or a missing/mismatched upstream. The dashboard never force-pulls, resets, stashes, or deletes a checkout. Project install scripts can create or change files; those changes may need attention before the next update. If dependency setup fails after a successful Git update, the fetched code remains in place and setup can be retried. Status counts describe the repositories currently loaded into the dashboard. An update fetches before checking whether remote commits are available; a scan alone does not fetch every repository.
+Updates stop when there are local changes, a conflicting destination, an unexpected origin, a detached branch, or a missing/mismatched upstream. The dashboard never force-pulls, resets, or deletes a checkout. Local changes are stashed only when you choose **Stash changes** or **Stash it/them and update**. Stashing shelves tracked edits and untracked files; restore them later with `git stash pop` in Terminal or Command Prompt.
+
+Project install scripts can create or change files; those changes may need attention before the next update. If dependency setup fails after a successful Git update, the fetched code remains in place and setup can be retried. Status counts describe the repositories currently loaded into the dashboard. An update fetches before checking whether remote commits are available; a scan alone does not fetch every repository.
 
 For private repositories, configure **Git's own credentials** before cloning. If you use [GitHub CLI](https://cli.github.com/), run `gh auth login`, then `gh auth setup-git` in Terminal. Existing Git credential helpers also work. The browser's GitHub token is used for repository information and read-only chat; local clone/update actions use Git credentials and do not receive that browser token. Interactive Git credential prompts are disabled for dashboard operations, so resolve sign-in problems in Terminal first.
 
@@ -158,6 +161,7 @@ The chat window is read-only. It can help with:
 - `show failing repos`
 - `which PRs need review?`
 - `show open PRs`
+- `show open issues`
 - `show issues for repo-name`
 - `what changed recently?`
 - `show stale repos`
