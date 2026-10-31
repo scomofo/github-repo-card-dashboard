@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   buildPromptContext,
@@ -53,6 +54,72 @@ test('parseFallbackCommand maps simple phrases to safe commands', () => {
   assert.deepEqual(parseFallbackCommand('summarize api-service'), { action: 'summarize_repo', repo: 'api-service' });
 });
 
+test('fallback chat lists open items without treating their names as repository hints', () => {
+  for (const message of ['show open issues', 'open issues']) {
+    assert.deepEqual(parseFallbackCommand(message), { action: 'list_issues' }, message);
+  }
+  for (const message of ['show open PRs', 'show open pull requests', 'open PRs', 'please show open pull requests']) {
+    assert.deepEqual(parseFallbackCommand(message), { action: 'list_pull_requests' }, message);
+  }
+});
+
+test('fallback chat respects explicit repository scopes for open items', () => {
+  const cases = [
+    ['show open issues for scomofo/api-service', 'list_issues', 'scomofo/api-service'],
+    ['show open PRs in api-service', 'list_pull_requests', 'api-service'],
+    ['open pull requests for scomofo/api-service', 'list_pull_requests', 'scomofo/api-service'],
+    ['show open issues for issues', 'list_issues', 'issues'],
+    ['show open PRs in prs', 'list_pull_requests', 'prs']
+  ];
+  for (const [message, action, repo] of cases) {
+    assert.deepEqual(parseFallbackCommand(message), { action, repo }, message);
+  }
+});
+
+test('fallback chat still opens and summarizes named repositories', () => {
+  assert.deepEqual(parseFallbackCommand('open api-service'), { action: 'open_repo', repo: 'api-service' });
+  assert.deepEqual(parseFallbackCommand('please open scomofo/api-service'), { action: 'open_repo', repo: 'scomofo/api-service' });
+  assert.deepEqual(parseFallbackCommand('summary of scomofo/api-service'), { action: 'summarize_repo', repo: 'scomofo/api-service' });
+  assert.deepEqual(parseFallbackCommand('tell me about api-service'), { action: 'summarize_repo', repo: 'api-service' });
+});
+
+test('every built-in chat suggestion parses without an unintended repository scope', async () => {
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  const suggestions = html.match(/<div class="chat-suggestions"[^>]*>([\s\S]*?)<\/div>/)?.[1];
+  assert.ok(suggestions, 'chat suggestions are present in the dashboard');
+  const expected = new Map([
+    ['overview', 'dashboard_overview'],
+    ['show failing repos', 'list_failing_repos'],
+    ['which PRs need review?', 'list_review_requests'],
+    ['show open issues', 'list_issues'],
+    ['show stale repos', 'list_stale_repos']
+  ]);
+  const prompts = [...suggestions.matchAll(/data-prompt="([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(prompts.length, expected.size);
+  for (const prompt of prompts) {
+    assert.ok(expected.has(prompt), `expected command for suggestion: ${prompt}`);
+    assert.deepEqual(parseFallbackCommand(prompt), { action: expected.get(prompt) }, prompt);
+  }
+});
+
+test('fallback chat retrieves open items from the loaded repositories', async () => {
+  for (const [message, item] of [['show open issues', 'issues'], ['show open PRs', 'pulls'], ['show open pull requests', 'pulls']]) {
+    const calls = [];
+    const result = await executeDashboardCommand({
+      command: parseFallbackCommand(message),
+      repos,
+      githubToken: 'test-token',
+      requestGithub: async (path) => {
+        calls.push(path);
+        return [{ number: 7, title: 'Improve auth', html_url: `https://github.com/scomofo/api-service/${item}/7`, user: { login: 'scomofo' } }];
+      }
+    });
+    assert.deepEqual(calls, [`/repos/scomofo/api-service/${item}?state=open&per_page=10`], message);
+    assert.match(result.text, /#7 Improve auth/, message);
+    assert.doesNotMatch(result.text, /could not find a repo/, message);
+  }
+});
+
 test('executeDashboardCommand summarizes failing repositories from dashboard data', async () => {
   const result = await executeDashboardCommand({
     command: { action: 'list_failing_repos' },
@@ -96,6 +163,31 @@ test('buildPromptContext keeps repo context compact', () => {
   assert.match(context, /scomofo\/api-service/);
   assert.match(context, /issues=2/);
   assert.ok(context.length < 1000);
+});
+
+test('buildPromptContext excludes archived repos like the dashboard UI', () => {
+  const mixed = [
+    ...repos,
+    {
+      fullName: 'scomofo/old-project',
+      owner: 'scomofo',
+      name: 'old-project',
+      url: 'https://github.com/scomofo/old-project',
+      description: 'Retired project',
+      openIssues: 5,
+      openPrs: 3,
+      workflow: { status: 'failure', text: 'Actions failure' },
+      pushedAt: new Date().toISOString(),
+      language: 'JavaScript',
+      isArchived: true
+    }
+  ];
+
+  const context = buildPromptContext(mixed);
+
+  assert.doesNotMatch(context, /scomofo\/old-project/);
+  assert.match(context, /scomofo\/api-service/);
+  assert.match(context, /scomofo\/docs/);
 });
 
 test('parseFallbackCommand understands the new read-only phrasings', () => {

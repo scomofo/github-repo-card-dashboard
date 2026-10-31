@@ -43,7 +43,10 @@ export function parseFallbackCommand(message) {
   if (/\b(prs?|pull requests?|pulls)\b/.test(text)) {
     return repo ? { action: 'list_pull_requests', repo } : { action: 'list_pull_requests' };
   }
-  if (text.includes('open')) return repo ? { action: 'open_repo', repo } : { action: 'help' };
+  if (text.includes('open')) {
+    const target = repo || extractRepoHint(text, { includeOpen: true });
+    return target ? { action: 'open_repo', repo: target } : { action: 'help' };
+  }
   if (text.includes('summarize') || text.includes('summary') || text.includes('tell me about') || text.includes('about')) {
     return repo ? { action: 'summarize_repo', repo } : { action: 'help' };
   }
@@ -52,7 +55,7 @@ export function parseFallbackCommand(message) {
 }
 
 export function buildPromptContext(repos) {
-  return repos.slice(0, 80).map((repo) => {
+  return repos.filter((repo) => !repo.isArchived).slice(0, 80).map((repo) => {
     return [
       repo.fullName,
       `issues=${repo.openIssues || 0}`,
@@ -251,8 +254,10 @@ function helpText() {
   ].join('\n');
 }
 
-function extractRepoHint(text) {
-  const match = text.match(/(?:for|in|open|summarize|summary of|about)\s+([a-z0-9_.-]+\/[a-z0-9_.-]+|[a-z0-9_.-]+)/i);
+function extractRepoHint(text, { includeOpen = false } = {}) {
+  // "Open" describes issue/PR state until the command is known to open a repo.
+  const match = text.match(/\b(?:for|in|summarize|summary of|about)\s+([a-z0-9_.-]+\/[a-z0-9_.-]+|[a-z0-9_.-]+)/i)
+    || (includeOpen && text.match(/\bopen\s+([a-z0-9_.-]+\/[a-z0-9_.-]+|[a-z0-9_.-]+)/i));
   const hint = match?.[1] || '';
   if (['the', 'my', 'all', 'a', 'any', 'repos', 'repo', 'repositories', 'this', 'week', 'last'].includes(hint)) return '';
   return hint;
